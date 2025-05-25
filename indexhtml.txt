@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Elevator Action FPS</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="instructions">
+        Click to Lock Pointer<br>
+        W/A/S/D: Move<br>
+        SPACE: Jump (Basic)<br>
+        SHIFT: Sprint<br>
+        U: Call Elevator Up<br>
+        J: Call Elevator Down<br>
+        E: Interact with Doors (when looking at them)
+    </div>
+    <div id="crosshair">+</div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>

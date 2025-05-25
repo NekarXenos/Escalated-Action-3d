@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escalated Mayhem</title>
+    <link rel="stylesheet" href="style.css">
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+</head>
+<body>
+    <div id="instructions">
+        Click to Lock Pointer<br>
+        W/A/S/D: Move<br>
+        SPACE: Jump (Basic)<br>
+        SHIFT: Sprint<br>
+        U: Call Elevator Up<br>
+        J: Call Elevator Down<br>
+        E: Interact with Doors (when looking at them)<br>
+        Left Mouse: Shoot
+    </div>
+    <div id="crosshair">+</div>
+    <div id="ui">
+        <div id="score">Score: 0</div>
+        <div id="lives">Lives: 3</div>
+        <div id="floorLevel">Floor: G</div>
+        <div id="gameOver">GAME OVER</div>
+    </div>
+    <div id="safeCrackedBanner" class="banner-overlay"></div>
+
+    <div id="crushBanner"></div>
+    <div id="debugOverlay">
+        <p id="playerCoords">Player: (x: 0, y: 0, z: 0)</p>
+        <p id="pointedObject">Looking at: None</p>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module" src="mainTMPd.js"></script>
+</body>
+</html>

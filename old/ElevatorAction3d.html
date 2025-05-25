@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Elevator Action 3D (Vanilla First Person)</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #controls { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1; }
+    button { margin: 0 10px; padding: 10px 20px; font-size: 16px; }
+    #debug { position: absolute; bottom: 20px; right: 20px; color: white; font-family: Arial, sans-serif; background: rgba(0, 0, 0, 0.5); padding: 10px; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <button onclick="setDirection(1)">Up</button>
+    <button onclick="setDirection(-1)">Down</button>
+  </div>
+  <div id="debug">X: 0, Y: 0, Z: 0</div>
+  <canvas id="scene"></canvas>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js"></script>
+  <script>
+    const canvas = document.getElementById('scene');
+    const renderer = new THREE.WebGLRenderer({ canvas });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x202020);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(5, 10, 5);
+    scene.add(dirLight);
+
+    const floorHeights = [0, 2, 4];
+
+    const player = new THREE.Object3D();
+    player.position.set(2.5, 4.55, 1); // Align with floor2 on the top floor
+    player.add(camera);
+    scene.add(player);
+
+    let velocityY = 0;
+    let isOnGround = false;
+    let canDoubleJump = false;
+    let debugFlyMode = false; // Debug fly mode toggle
+    const speed = 0.1;
+
+    // Movement keys
+    const keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'w') keys.w = true;
+      if (e.key === 'a') keys.a = true;
+      if (e.key === 's') keys.s = true;
+      if (e.key === 'd') keys.d = true;
+      if (e.key === 'Shift') keys.shift = true;
+      if (e.key === ' ') {
+        if (debugFlyMode) {
+          velocityY = 0.2; // Fly up
+        } else if (isOnGround) {
+          velocityY = 0.2; // Jump
+          isOnGround = false;
+          canDoubleJump = true;
+        } else if (canDoubleJump) {
+          velocityY = 0.2; // Double jump
+          canDoubleJump = false;
+        }
+      }
+      if (e.key === 'f') {
+        debugFlyMode = !debugFlyMode; // Toggle debug fly mode
+        velocityY = 0; // Reset vertical velocity
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'w') keys.w = false;
+      if (e.key === 'a') keys.a = false;
+      if (e.key === 's') keys.s = false;
+      if (e.key === 'd') keys.d = false;
+      if (e.key === 'Shift') keys.shift = false;
+    });
+
+    // Mouse look
+    let pitch = 0;
+    let yaw = 0;
+
+    document.addEventListener('mousemove', (e) => {
+      const sensitivity = 0.002;
+      yaw -= e.movementX * sensitivity;
+      pitch -= e.movementY * sensitivity;
+      pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch)); // Clamp pitch
+      camera.rotation.set(pitch, yaw, 0);
+    });
+
+    canvas.addEventListener('click', () => {
+      canvas.requestPointerLock();
+    });
+
+    // Floors with elevator shafts (holes)
+    for (let i = 0; i < 3; i++) {
+      const y = i * 2;
+      const floorGeometry = new THREE.BoxGeometry(10, 0.1, 2);
+      const material = new THREE.MeshStandardMaterial({ color: 'white' });
+
+      const floor1 = new THREE.Mesh(floorGeometry, material);
+      floor1.position.set(3.5, y - 0.05, 0);
+      scene.add(floor1);
+
+      const floor2 = new THREE.Mesh(floorGeometry, material);
+      floor2.position.set(-3.5, y - 0.05, 0);
+      scene.add(floor2);
+
+      const red = new THREE.Mesh(
+        new THREE.BoxGeometry(0.8, 1, 0.1),
+        new THREE.MeshStandardMaterial({ color: 'red' })
+      );
+      red.position.set(2, y, -1);
+      scene.add(red);
+
+      [-2, 0].forEach((x) => {
+        const black = new THREE.Mesh(
+          new THREE.BoxGeometry(0.8, 1, 0.1),
+          new THREE.MeshStandardMaterial({ color: 'black' })
+        );
+        black.position.set(x, y, -1);
+        scene.add(black);
+      });
+    }
+
+    const elevator = new THREE.Group();
+    const platform = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 0.1, 1),
+      new THREE.MeshStandardMaterial({ color: 'gray' })
+    );
+    platform.position.y = -0.45;
+    elevator.add(platform);
+
+    const backWall = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 0.1),
+      new THREE.MeshStandardMaterial({ color: 'gray' })
+    );
+    backWall.position.set(0, 0.25, -0.45);
+    elevator.add(backWall);
+
+    elevator.position.set(-3, 0, 0);
+    scene.add(elevator);
+
+    let elevatorY = 0;
+    let direction = 0;
+    let isOnElevator = false;
+
+    function setDirection(dir) {
+      direction = dir;
+    }
+
+    function checkPlayerPlatformCollision() {
+      const playerFeet = player.position.y - 0.5;
+      const elevatorTop = elevator.position.y + 0.05;
+
+      const isAbove = player.position.x > -3.5 && player.position.x < -2.5 && Math.abs(playerFeet - elevatorTop) < 0.05;
+      if (isAbove && velocityY <= 0) {
+        player.position.y = elevatorTop + 0.5;
+        velocityY = 0;
+        isOnElevator = true;
+      } else {
+        isOnElevator = false;
+      }
+    }
+
+    function checkCrush() {
+      if (elevator.position.y <= 0 && direction < 0) {
+        if (player.position.x > -3.5 && player.position.x < -2.5 && player.position.y < 0.6) {
+          alert("Player crushed by elevator!");
+          direction = 0;
+        }
+      }
+    }
+
+    function checkFloorCollision() {
+      const floorY = floorHeights.find(f => player.position.y >= f - 0.05 && player.position.y <= f + 0.05);
+      if (floorY !== undefined && !isOnElevator) {
+        player.position.y = floorY + 0.5; // Place the player on the floor
+        velocityY = 0;
+      }
+    }
+
+    function checkWallCollision() {
+      if (player.position.x < -5) player.position.x = -5;
+      if (player.position.x > 5) player.position.x = 5;
+
+      // Prevent the player from standing in the elevator shaft unless falling
+      if (player.position.x > -3.5 && player.position.x < -2.5 && velocityY >= 0) {
+        player.position.x = velocityY > 0 ? player.position.x : -3.5; // Push player out of the shaft
+      }
+    }
+
+    function updatePlayerPosition() {
+      // Horizontal movement
+      const moveSpeed = keys.shift ? speed * 2 : speed; // Sprint with Shift
+      const forward = new THREE.Vector3(
+        Math.sin(yaw),
+        0,
+        Math.cos(yaw)
+      ).normalize();
+      const right = new THREE.Vector3(
+        Math.sin(yaw + Math.PI / 2),
+        0,
+        Math.cos(yaw + Math.PI / 2)
+      ).normalize();
+
+      if (keys.w) player.position.add(forward.clone().multiplyScalar(moveSpeed));
+      if (keys.s) player.position.add(forward.clone().multiplyScalar(-moveSpeed));
+      if (keys.a) player.position.add(right.clone().multiplyScalar(-moveSpeed));
+      if (keys.d) player.position.add(right.clone().multiplyScalar(moveSpeed));
+
+      // Gravity or fly mode
+      if (debugFlyMode) {
+        if (keys.space) player.position.y += moveSpeed; // Fly up
+        if (keys.shift) player.position.y -= moveSpeed; // Fly down
+      } else {
+        velocityY -= 0.01; // Gravity
+        player.position.y += velocityY;
+
+        // Floor collision
+        const floorY = floorHeights.find(f => player.position.y >= f - 0.05 && player.position.y <= f + 0.05);
+        if (floorY !== undefined && velocityY <= 0) {
+          player.position.y = floorY + 0.5; // Place the player on the floor
+          velocityY = 0;
+          isOnGround = true;
+        } else {
+          isOnGround = false;
+        }
+      }
+
+      // Wall collision
+      if (player.position.x < -5) player.position.x = -5;
+      if (player.position.x > 5) player.position.x = 5;
+      if (player.position.z < -1) player.position.z = -1;
+      if (player.position.z > 1) player.position.z = 1;
+    }
+
+    function updateDebugDisplay() {
+      const debug = document.getElementById('debug');
+      debug.textContent = `X: ${player.position.x.toFixed(2)}, Y: ${player.position.y.toFixed(2)}, Z: ${player.position.z.toFixed(2)} | Fly Mode: ${debugFlyMode}`;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (direction !== 0) {
+        let newY = elevatorY + direction * 0.05;
+        const targets = direction > 0
+          ? floorHeights.filter(f => f > elevatorY)
+          : floorHeights.filter(f => f < elevatorY);
+        const target = direction > 0 ? Math.min(...targets) : Math.max(...targets);
+
+        if ((direction > 0 && newY >= target) || (direction < 0 && newY <= target)) {
+          newY = target;
+          direction = 0;
+        }
+
+        elevatorY = newY;
+        elevator.position.y = elevatorY;
+      }
+
+      checkCrush();
+      checkPlayerPlatformCollision();
+      checkFloorCollision();
+      checkWallCollision();
+
+      if (!isOnElevator) {
+        velocityY -= 0.01;
+        player.position.y += velocityY;
+
+        if (player.position.y < -5) {
+          alert("Player fell down the shaft!");
+          player.position.set(-3.5, 4.55, 0); // Reset to top floor
+          velocityY = 0;
+        }
+      }
+
+      updatePlayerPosition();
+      updateDebugDisplay();
+
+      camera.position.set(0, 0, 0);
+      camera.lookAt(0, 0, -1);
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>

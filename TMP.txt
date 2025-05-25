@@ -1,0 +1,214 @@
+let isPlayerRespawning = false; // Tracks if the player is waiting to respawn
+
+const animatedGarageDoors = []; // To store garage doors that need animation
+const enemies = []; // Array to store enemy objects
+let enemies = []; // Array to store enemy objects
+let currentElevatorConfig = null; // To help generateWorld access the current elevator's properties
+
+const floorDepth = SETTINGS.floorHeight - SETTINGS.wallHeight; // Add this near your SETTINGS or at the top of generateWorld
+// This material is for the glowing disk of corridor/area lamps, which is statically emissive.
+const lampCorridorDiskMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa77, emissive: 0xffaa77, emissiveIntensity: 1 });
+// lightBulbMaterial (for the bulb itself) will be passed in, as it's already globally defined in generateWorld.
+
+// --- Enemy Settings ---
+const ENEMY_SETTINGS = {
+    height: 1.8,
+    width: 0.5,
+    depth: 0.5,
+    fireRate: 2000, // milliseconds between shots
+    projectileSpeed: 15.0,
+    projectileSize: 0.1,
+    activationRadius: 40, // Enemies become active if player is within this radius
+    losMaxDistance: 50,   // Max distance for line of sight check
+};
+
+const projectiles = []; // Array to store active projectiles
+const enemyGeometry = new THREE.BoxGeometry(ENEMY_SETTINGS.width, ENEMY_SETTINGS.height, ENEMY_SETTINGS.depth);
+const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red for enemies
+const projectileGeometry = new THREE.SphereGeometry(ENEMY_SETTINGS.projectileSize, 8, 8);
+const projectileMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, emissiveIntensity: 1 });
+
+
+// --- Initialization ---
+    return lightGroup;
+}
+
+// --- Enemy Creation ---
+function createEnemy(x, y, z, floorIndex) {
+    const enemyMesh = new THREE.Mesh(enemyGeometry, enemyMaterial);
+    enemyMesh.position.set(x, y + ENEMY_SETTINGS.height / 2, z); // y is base, position at center
+    enemyMesh.castShadow = true;
+    enemyMesh.userData = {
+        type: 'enemy',
+        floorIndex: floorIndex,
+        lastShotTime: 0,
+        health: 100 // Basic health
+    };
+    scene.add(enemyMesh);
+    enemies.push(enemyMesh);
+    worldObjects.push(enemyMesh); // For collision with player movement and projectiles
+    return enemyMesh;
+}
+
+// --- Projectile Creation ---
+function createProjectile(startPosition, direction) {
+    const projectile = new THREE.Mesh(projectileGeometry, projectileMaterial);
+    projectile.position.copy(startPosition);
+    projectile.userData = {
+        type: 'projectile',
+        velocity: direction.clone().multiplyScalar(ENEMY_SETTINGS.projectileSpeed),
+        spawnTime: clock.getElapsedTime()
+    };
+    scene.add(projectile);
+    projectiles.push(projectile);
+}
+
+// --- World Generation ---
+function generateWorld() {
+    const totalCorridorLength = SETTINGS.doorsPerSide * SETTINGS.corridorSegmentLength;
+                scene.add(capWallNear);
+                worldObjects.push(capWallNear);
+            }
+
+            // Place enemies
+            if (i >= 0) { // Office Floors
+                for (let j = 0; j < SETTINGS.doorsPerSide; j++) {
+                    const segmentCenterZ_A = (j + 0.5) * SETTINGS.corridorSegmentLength;
+                    const segmentCenterZ_B = ((j + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
+
+                    createEnemy(SETTINGS.corridorWidth / 2, floorY, segmentCenterZ_A, i); // A-Wing
+                    createEnemy(SETTINGS.corridorWidth / 2, floorY, segmentCenterZ_B, i); // B-Wing
+                }
+            } else { // Basement Floors
+                if (i === -SETTINGS.numBasementFloors) { // Only on the lowest basement for now
+                    createEnemy(basementCenterX - 5, floorY, basementCenterZ, i);
+                    createEnemy(basementCenterX + 5, floorY, basementCenterZ - 5, i);
+                }
+            }
+
+
+
+
+        } // End of Office Floor Generation (i >= 0)
+
+        // --- Common elements for ALL floors (basement and above-ground) ---
+    playerLives = 3;
+    playerScore = 0;
+    isGameOver = false;
+    enemies.forEach(enemy => scene.remove(enemy)); enemies = []; // Clear old enemies
+    document.getElementById('gameOver').style.display = 'none';
+    updateUI();
+
+        );
+    } // Else, consider a default spawn point
+    playerVelocity.set(0, 0, 0);
+
+    // Regenerate parts of the world if necessary, or re-add enemies
+    // For simplicity, if enemies are part of generateWorld, they'd be recreated if generateWorld is called.
+}
+
+function updatePlayer(deltaTime) {
+    }
+}
+
+function updateEnemies(deltaTime) {
+    const playerCameraObject = controls.getObject();
+    const playerWorldPosition = new THREE.Vector3();
+    playerCameraObject.getWorldPosition(playerWorldPosition); // Get camera's world position
+
+    // Calculate player's body center for aiming and distance checks
+    const playerBodyCenter = playerWorldPosition.clone();
+    playerBodyCenter.y -= playerHeight / 2; // Adjust from camera (eye level) to body center
+
+    enemies.forEach(enemy => {
+        if (enemy.userData.health <= 0) return;
+
+        const enemyPosition = enemy.position.clone(); // This is already the center of the enemy mesh
+        const distanceToPlayer = enemyPosition.distanceTo(playerBodyCenter);
+
+        if (distanceToPlayer > ENEMY_SETTINGS.activationRadius) {
+            return; // Player too far, enemy is not active
+        }
+
+        // Make enemy face the player (Y-axis rotation only)
+        const lookAtTarget = playerBodyCenter.clone();
+        lookAtTarget.y = enemyPosition.y; // Keep enemy upright
+        enemy.lookAt(lookAtTarget);
+
+        // Line of Sight Check
+        // Raycast from enemy's "eyes" (approximate)
+        const rayOrigin = enemyPosition.clone();
+        rayOrigin.y += ENEMY_SETTINGS.height * 0.4; // Adjust Y to be near the top of the enemy model
+
+        const directionToPlayer = playerBodyCenter.clone().sub(rayOrigin).normalize();
+        const raycaster = new THREE.Raycaster(rayOrigin, directionToPlayer, 0.1, ENEMY_SETTINGS.losMaxDistance);
+
+        const obstacles = worldObjects.filter(obj => obj !== enemy && obj.userData.type !== 'projectile');
+        const intersects = raycaster.intersectObjects(obstacles, true); // Check against world objects
+
+        let playerInLOS = true;
+        if (intersects.length > 0) {
+            // If the first thing hit is closer than the player, LOS is blocked
+            if (intersects[0].distance < distanceToPlayer - 0.5) { // 0.5 tolerance
+                playerInLOS = false;
+            }
+        }
+
+        if (playerInLOS && distanceToPlayer <= ENEMY_SETTINGS.losMaxDistance) {
+            const currentTime = clock.getElapsedTime() * 1000; // Current time in milliseconds
+            if (currentTime > enemy.userData.lastShotTime + ENEMY_SETTINGS.fireRate) {
+                enemy.userData.lastShotTime = currentTime;
+
+                // Calculate firing position (slightly in front of enemy, at "gun" height)
+                const firePosition = enemy.position.clone(); // Start at enemy center
+                const forwardVector = new THREE.Vector3(0, 0, -1); // Local forward
+                forwardVector.applyQuaternion(enemy.quaternion); // Transform to world forward
+                firePosition.addScaledVector(forwardVector, ENEMY_SETTINGS.depth / 2 + 0.1); // Move forward
+                // firePosition.y remains enemy.position.y if gun is at center height, or adjust:
+                // firePosition.y += ENEMY_SETTINGS.height * 0.2; // Example: gun slightly above center
+
+                createProjectile(firePosition, directionToPlayer);
+            }
+        }
+    });
+}
+
+function updateProjectiles(deltaTime) {
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+        const projectile = projectiles[i];
+        projectile.position.addScaledVector(projectile.userData.velocity, deltaTime);
+
+        // Check lifetime
+        if (clock.getElapsedTime() - projectile.userData.spawnTime > 5) { // 5 seconds lifetime
+            scene.remove(projectile);
+            projectiles.splice(i, 1);
+            continue;
+        }
+
+        // Check collision with player
+        const playerCameraPosition = controls.getObject().position;
+        const playerBodyCenter = playerCameraPosition.clone();
+        playerBodyCenter.y -= playerHeight / 2; // Adjust to player's body center
+
+        if (projectile.position.distanceTo(playerBodyCenter) < playerHeight / 2) { // Approximate player radius
+            applyDamageToPlayer(10); // Example damage value
+            scene.remove(projectile);
+            projectiles.splice(i, 1);
+            // console.log("Player hit!");
+            continue;
+        }
+
+        // Check collision with worldObjects
+        const projectileBox = new THREE.Box3().setFromCenterAndSize(projectile.position, new THREE.Vector3(ENEMY_SETTINGS.projectileSize * 2, ENEMY_SETTINGS.projectileSize * 2, ENEMY_SETTINGS.projectileSize * 2));
+        for (const wo of worldObjects) {
+            if (wo.userData.type === 'enemy' || wo.userData.type === 'projectile' || wo === projectile) continue;
+
+            if (wo.geometry && wo.geometry.boundingBox) { // Ensure boundingBox exists
+                const objectWorldBox = new THREE.Box3().copy(wo.geometry.boundingBox).applyMatrix4(wo.matrixWorld);
+                if (projectileBox.intersectsBox(objectWorldBox)) {
+                    scene.remove(projectile);
+                    projectiles.splice(i, 1);
+                    // Optional: create impact effect
+                    break;
+                }
+            }
