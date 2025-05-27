@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
-import { calculateEscalatorBoost, animateActiveEscalatorSteps } from './escalatorTMP.js';
+import { calculateEscalatorBoost, animateActiveEscalatorSteps } from './escalatorTMPd.js';
 
 // IMPORTANT: Left is +X and Right is -X in this world
 // Up is +Y and Down is -Y in this world
@@ -108,9 +108,9 @@ const allRoomsData = []; // Stores data for each room for LOD management
     contentsGroup: THREE.Group, visibleByDoor: boolean, visibleByWindow: boolean, lamp: THREE.Group }
 */
 // --- Reusable Lamp Geometries & Materials (defined once) ---
-const lampConeGeo = new THREE.ConeGeometry(0.3, 0.2, 16);
+const lampConeGeo = new THREE.ConeGeometry(0.3, 0.2, 8);
 const lampChainGeo = new THREE.BoxGeometry(0.05, 0.5, 0.05);
-const lampBulbGeo = new THREE.SphereGeometry(0.08, 16, 8); // bulbRadius = 0.08
+const lampBulbGeo = new THREE.SphereGeometry(0.08, 8, 8); // bulbRadius = 0.08
 const lampBottomDiskGeo = new THREE.CircleGeometry(0.3, 16);
 
 // Materials for standard corridor/area lamps (non-animated parts)
@@ -183,6 +183,7 @@ function init() {
     // Start the animation loop
     animate();
 }
+
 
 // --- Elevator Creation ---
 function createElevator(config) {
@@ -303,6 +304,25 @@ function createElevator(config) {
     return elevatorObj;
 }
 
+// --- Enemy Settings ---
+const ENEMY_SETTINGS = {
+    height: 1.8,
+    width: 0.5,
+    depth: 0.5,
+    fireRate: 2000, // milliseconds between shots
+    projectileSpeed: 15.0,
+    projectileSize: 0.1,
+    activationRadius: 40, // Enemies become active if player is within this radius
+    losMaxDistance: 50,   // Max distance for line of sight check
+};
+
+const projectiles = []; // Array to store active projectiles
+const enemyGeometry = new THREE.BoxGeometry(ENEMY_SETTINGS.width, ENEMY_SETTINGS.height, ENEMY_SETTINGS.depth);
+const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red for enemies
+const projectileGeometry = new THREE.SphereGeometry(ENEMY_SETTINGS.projectileSize, 8, 8);
+const projectileMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, emissiveIntensity: 1 });
+
+
 // --- Standard Lamp Creation Function ---
 function createStandardLamp(x, y, z, floorIndex, lampIdSuffix, sceneRef, lightsArrayRef, globalLightBulbMaterialRef) {
     const chainMesh = new THREE.Mesh(lampChainGeo, lampChainMaterial);
@@ -345,6 +365,131 @@ function createStandardLamp(x, y, z, floorIndex, lampIdSuffix, sceneRef, lightsA
     // Note: isRoomLight defaults to false or undefined, differentiating from specialized room lights.
     return lightGroup;
 }
+
+// --- Enemy Creation ---
+function createEnemy(x, y, z, floorIndex) {
+    const enemyMesh = new THREE.Mesh(enemyGeometry, enemyMaterial);
+    enemyMesh.position.set(x, y + ENEMY_SETTINGS.height / 2, z); // y is base, position at center
+    enemyMesh.castShadow = true;
+    enemyMesh.userData = {
+        type: 'enemy',
+        floorIndex: floorIndex,
+        lastShotTime: 0,
+        health: 100, // Basic health
+        gun: null, // To store the gun mesh
+        gunLength: 0 // To store gun length for tip calculation
+    };
+
+    // Create a gun for the enemy
+    const gunLength = 0.7; // Length of the gun barrel
+    const gunRadius = 0.05; // Radius of the gun barrel
+    const gunGeometry = new THREE.CylinderGeometry(gunRadius, gunRadius, gunLength, 8);
+    const gunMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 }); // Dark grey for the gun
+    const gunMesh = new THREE.Mesh(gunGeometry, gunMaterial);
+
+    // Orient the gun: Cylinder's length is along its local Y by default.
+    // Rotate it to align with the enemy's forward direction (local -Z).
+    gunMesh.rotation.x = Math.PI / 2;
+
+    // Position the gun relative to the enemy.
+    // The gun's origin is at its center. We position it so the tip protrudes.
+    // Move it to the enemy's local +X (right side).
+    const gunXOffset = -((ENEMY_SETTINGS.width / 2) + gunRadius + 0.1); // Position further to the left (enemy's right)
+    const gunYOffset = ENEMY_SETTINGS.height * 0.2; // Position slightly higher than center
+    const gunZOffset = -(ENEMY_SETTINGS.depth / 2 + gunLength / 2 - 0.1); // Protrude forward, slightly more embed for stability
+    gunMesh.position.set(gunXOffset, gunYOffset, gunZOffset);
+
+    enemyMesh.add(gunMesh); // Add gun as a child of the enemy
+    enemyMesh.userData.gun = gunMesh;
+    enemyMesh.userData.gunLength = gunLength;
+
+    // Diagnostic log:
+    // console.log(`Enemy ID: ${enemyMesh.id}, Gun ID: ${gunMesh.id}, Gun Parent ID: ${gunMesh.parent ? gunMesh.parent.id : 'null'}, Gun Visible: ${gunMesh.visible}`);
+
+    scene.add(enemyMesh);
+    enemies.push(enemyMesh);
+    worldObjects.push(enemyMesh); // For collision with player movement and projectiles
+    return enemyMesh;
+}
+
+// --- Projectile Creation ---
+function createProjectile(startPosition, direction, firedByPlayer = false, firer = null) {
+    const projectile = new THREE.Mesh(projectileGeometry, projectileMaterial);
+    projectile.position.copy(startPosition);
+    projectile.userData = {
+        type: 'projectile',
+        velocity: direction.clone().multiplyScalar(ENEMY_SETTINGS.projectileSpeed),
+        spawnTime: clock.getElapsedTime(),
+        firedByPlayer: firedByPlayer, // Mark who fired the projectile
+        firer: firer // Store the entity that fired the projectile
+    };
+    // console.log(`Projectile created by ${firer ? firer.name + ' (ID: ' + firer.id + ')' : (firedByPlayer ? 'Player' : 'Unknown')}. Projectile ID: ${projectile.id}`);
+    scene.add(projectile);
+    projectiles.push(projectile);
+    worldObjects.push(projectile); // Add to worldObjects for collision detection
+}
+
+// --- Initialization ---
+/* function init() {
+    clock = new THREE.Clock(); // Initialize clock here
+    scene = new THREE.Scene();
+    // Set background to a dark blue for a moonlit night
+    scene.background = new THREE.Color(0x010309); // Dark blue
+    scene.fog = new THREE.Fog(0x010309, 10, 100); // Fog to match the night theme
+
+    // Camera
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    // Camera position will be set after elevators are created in generateWorld
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('gameCanvas'), antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.shadowMap.enabled = true;
+
+    // Lighting (moved from original spot to be before generateWorld if it depends on scene)
+    const ambientLight = new THREE.AmbientLight(0x015599, 0.1); // Dim bluish ambient light
+    scene.add(ambientLight);
+
+    const moonlight = new THREE.DirectionalLight(0x015599, 0.3); // Soft bluish moonlight
+    moonlight.position.set(-10, 20, -10); // Position the moonlight
+    moonlight.castShadow = true;
+    scene.add(moonlight);
+
+    // --- Procedural Generation ---
+    generateWorld(); // Now clock is initialized, enemies can use it
+
+    // Pointer Lock Controls (after camera is positioned by generateWorld/elevators)
+    controls = new PointerLockControls(camera, document.body);
+    scene.add(controls.getObject()); // Add the camera holder to the scene
+
+    const instructions = document.getElementById('instructions');
+    instructions.innerHTML = `
+        <p>Move: W/A/S/D</p>
+        <p>Jump: Space</p>
+        <p>Sprint: Shift</p>
+        <p>Crouch: Ctrl</p>
+        <p>Prone: Ctrl, Ctrl</p>
+        <p>Interact: E</p>
+        <p>Shoot: Left Mouse Button</p>
+    `;
+
+    controls.addEventListener('lock', () => instructions.style.display = 'none');
+    controls.addEventListener('unlock', () => instructions.style.display = 'block');
+    document.body.addEventListener('click', () => controls.lock());
+
+    // --- Event Listeners ---
+    document.addEventListener('mousedown', shoot);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    window.addEventListener('resize', onWindowResize);
+
+    // Make the player jump slightly at the start
+    playerVelocity.y = 2.0;
+
+    // Start the animation loop
+    animate();
+} */
 
 // --- World Generation ---
 function generateWorld() {
@@ -1470,7 +1615,7 @@ function generateWorld() {
                     safeR.castShadow = true; safeR.receiveShadow = true; safeR.name = `Safe_R_F${i}_D${j}`;
                     safeR.userData = defaultSafeUserData(); // scene.add(safeR); worldObjects.push(safeR);
                     rightRoomContents.add(safeR); worldObjects.push(safeR);
-                    const dialRGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
+                    const dialRGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
                     const dialR = new THREE.Mesh(dialRGeo, dialMaterial);
                     dialR.position.set(safeDepth / 2, 0, 0); dialR.rotation.z = -Math.PI / 2;
                     dialR.userData.isSafeDial = true; dialR.name = `Dial_Safe_R_F${i}_D${j}`; safeR.add(dialR);
@@ -1548,7 +1693,7 @@ function generateWorld() {
                     safeBR.castShadow = true; safeBR.receiveShadow = true; safeBR.name = `Safe_B_R_F${i}_D${j}`;
                     safeBR.userData = defaultSafeUserData(); // scene.add(safeR); worldObjects.push(safeR);
                     rightRoomContents.add(safeBR); worldObjects.push(safeBR);
-                    const dialRBGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
+                    const dialRBGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
                     const dialRB = new THREE.Mesh(dialRBGeo, dialMaterial);
                     dialRB.position.set(safeDepth / 2, 0, 0); dialRB.rotation.z = -Math.PI / 2;
                     dialRB.userData.isSafeDial = true; dialRB.name = `Dial_Safe_B_R_F${i}_D${j}`; safeBR.add(dialRB);
@@ -1621,7 +1766,7 @@ function generateWorld() {
                     safeL.castShadow = true; safeL.receiveShadow = true; safeL.name = `Safe_L_F${i}_D${j}`;
                     safeL.userData = defaultSafeUserData(); // scene.add(safeL); worldObjects.push(safeL);
                     leftRoomContents.add(safeL); worldObjects.push(safeL);
-                    const dialLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
+                    const dialLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
                     const dialL = new THREE.Mesh(dialLGeo, dialMaterial);
                     dialL.position.set(-safeDepth / 2, 0, 0); dialL.rotation.z = Math.PI / 2;
                     dialL.userData.isSafeDial = true; dialL.name = `Dial_Safe_L_F${i}_D${j}`; safeL.add(dialL);
@@ -1691,7 +1836,7 @@ function generateWorld() {
                                     safeBL.castShadow = true; safeBL.receiveShadow = true; safeBL.name = `Safe_L_F${i}_D${j}`;
                                     safeBL.userData = defaultSafeUserData(); // scene.add(safeL); worldObjects.push(safeL);
                                     leftRoomContents.add(safeBL); worldObjects.push(safeBL);
-                                    const dialBLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
+                                    const dialBLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
                                     const dialBL = new THREE.Mesh(dialBLGeo, dialMaterial);
                                     dialBL.position.set(-safeDepth / 2, 0, 0); dialBL.rotation.z = Math.PI / 2;
                                     dialBL.userData.isSafeDial = true; dialBL.name = `Dial_Safe_B_L_F${i}_D${j}`; safeBL.add(dialBL);
@@ -1917,7 +2062,7 @@ function generateWorld() {
             const escLightPositions = [totalCorridorLength + 4, totalCorridorLength + 4 + (2*escalatorLength/3)];
             escLightPositions.forEach((zPos, idx) => {
                 // escalator bridge light creation logic
-                const lightGeo = new THREE.ConeGeometry(0.3, 0.2, 16);
+                const lightGeo = new THREE.ConeGeometry(0.3, 0.2, 8);
                 createStandardLamp(
                     SETTINGS.corridorWidth / 2,
                     floorY + SETTINGS.wallHeight - 0.5,
@@ -1934,7 +2079,7 @@ function generateWorld() {
             const escBLightBPositions = [escBBridgeStartRefZ, escBBridgeStartRefZ - (2*escalatorLength/3)];
             escBLightBPositions.forEach((zPos, idx) => {
                 // escalator bridge light creation logic
-                const lightBGeo = new THREE.ConeGeometry(0.3, 0.2, 16);
+                const lightBGeo = new THREE.ConeGeometry(0.3, 0.2, 8);
                 createStandardLamp(
                     SETTINGS.corridorWidth / 2,
                     floorY + SETTINGS.wallHeight - 0.5,
@@ -2717,41 +2862,7 @@ function generateWorld() {
         shaftWallRight.castShadow = true; shaftWallRight.receiveShadow = true;
         scene.add(shaftWallRight); worldObjects.push(shaftWallRight);
 
-        // Shaft Wall Back
-        /* const shaftWallBackGeo = new THREE.BoxGeometry(overallShaftActualWidth, SETTINGS.floorHeight, wallDepth);
-        const shaftWallBack = new THREE.Mesh(shaftWallBackGeo, wallMaterial);
-        shaftWallBack.name = `ShaftWall_Back_F${i}`;
-        shaftWallBack.position.set(
-            overallShaftActualCenterX, // Adjusted
-            floorY + SETTINGS.floorHeight / 2,
-            overallShaftMinZ - wallDepth / 2
-        );
-        shaftWallBack.castShadow = true; shaftWallBack.receiveShadow = true;
-        scene.add(shaftWallBack); worldObjects.push(shaftWallBack); */
-
-        // Lintel/Cap Wall above elevator opening (front of shaft)
-        // Assuming standard door height for the opening.
-        // const openingHeight = SETTINGS.doorHeight; // This was for the old lintel
-        // const capWallHeight = SETTINGS.wallHeight - openingHeight; // This was for the old lintel
-        /* if (capWallHeight > 0.01) {
-            const capWallGeo = new THREE.BoxGeometry(currentElevatorConfig.shaftWidth, capWallHeight, wallDepth);
-            const capWallNear = new THREE.Mesh(capWallGeo, wallMaterial); // Use wallMaterial
-            capWallNear.name = `ShaftLintel_F${i}`;
-            capWallNear.position.set(
-                currentElevatorConfig.x,
-                floorY + openingHeight + capWallHeight / 2, // Positioned above door opening
-                currentElevatorConfig.z + currentElevatorConfig.shaftDepth / 2 + wallDepth / 2 // Front of shaft
-            );
-            capWallNear.castShadow = true; capWallNear.receiveShadow = true;
-            scene.add(capWallNear); worldObjects.push(capWallNear);
-        } */
-
-        // Fillers next to the opening if the shaft is wider than a standard door
-        // This part of your complex if we want actual elevator doors. For now, assume open front or simple fillers.
-        // The current `capWallNear` spans the whole shaft width above the opening.
-        // If we need side fillers for the opening itself (from floor to openingHeight):
-        // This would depend on how elevator doors are implemented.
-        // For now, the shaft is open at the front up to `openingHeight`.
+        
 
         // The old "capWallNear" that filled the floorDepth thickness above wallHeight:
         const floorCapGeo = new THREE.BoxGeometry(overallShaftActualWidth, SETTINGS.floorHeight - SETTINGS.wallHeight, wallDepth);
@@ -2766,6 +2877,47 @@ function generateWorld() {
         capWallNear.receiveShadow = true;
         scene.add(capWallNear);
         worldObjects.push(capWallNear);
+
+        // Place enemies on office floors (Moved here to be within the 'i' loop scope)
+        if (i >= 0) { // Office Floors
+            // floorY is defined at the start of this loop
+
+            // Wing A Enemies
+            // 1. Corridor Enemy (random Z)
+            const randomCorridorZ_A = Math.random() * totalCorridorLength;
+            createEnemy(SETTINGS.corridorWidth / 2, floorY, randomCorridorZ_A, i);
+
+            // 2. Left Room Enemy (random room)
+            const randomLeftRoomIndex_A = Math.floor(Math.random() * SETTINGS.doorsPerSide);
+            const leftRoomCenterZ_A = (randomLeftRoomIndex_A + 0.5) * SETTINGS.corridorSegmentLength;
+            const leftRoomCenterX_A = SETTINGS.corridorWidth + SETTINGS.roomSize / 2;
+            createEnemy(leftRoomCenterX_A, floorY, leftRoomCenterZ_A, i);
+
+            // 3. Right Room Enemy (random room)
+            const randomRightRoomIndex_A = Math.floor(Math.random() * SETTINGS.doorsPerSide);
+            const rightRoomCenterZ_A = (randomRightRoomIndex_A + 0.5) * SETTINGS.corridorSegmentLength;
+            const rightRoomCenterX_A = -SETTINGS.roomSize / 2;
+            createEnemy(rightRoomCenterX_A, floorY, rightRoomCenterZ_A, i);
+
+            // Wing B Enemies
+            // 1. Corridor Enemy (random Z)
+            // B-wing corridor Z ranges from -16 - totalCorridorLength (far end) to -16 (near end)
+            const randomCorridorZ_B = -16 - (Math.random() * totalCorridorLength);
+            createEnemy(SETTINGS.corridorWidth / 2, floorY, randomCorridorZ_B, i);
+
+            // 2. Left Room Enemy (random room)
+            const randomLeftRoomIndex_B = Math.floor(Math.random() * SETTINGS.doorsPerSide);
+            const leftRoomCenterZ_B = ((randomLeftRoomIndex_B + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
+            const leftRoomCenterX_B = SETTINGS.corridorWidth + SETTINGS.roomSize / 2; // Same X as A-wing left rooms
+            createEnemy(leftRoomCenterX_B, floorY, leftRoomCenterZ_B, i);
+
+            // 3. Right Room Enemy (random room)
+            const randomRightRoomIndex_B = Math.floor(Math.random() * SETTINGS.doorsPerSide);
+            const rightRoomCenterZ_B = ((randomRightRoomIndex_B + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
+            const rightRoomCenterX_B = -SETTINGS.roomSize / 2; // Same X as A-wing right rooms
+            createEnemy(rightRoomCenterX_B, floorY, rightRoomCenterZ_B, i);
+        }
+
     }
 
     // Initial camera position relative to the active elevator
@@ -3431,32 +3583,54 @@ function callSpecificElevatorToFloor(elevatorInstance, targetFloorIndex) {
 
 function shoot() {
     if (!controls.isLocked) return;
+
+    // Player shoots a projectile
+    const projectileStartOffset = 0.5; // Distance in front of camera to spawn projectile
+    const projectileDirection = new THREE.Vector3();
+    camera.getWorldDirection(projectileDirection); // Get the direction camera is facing
+
+    const projectileStartPosition = new THREE.Vector3();
+    camera.getWorldPosition(projectileStartPosition); // Get camera's world position
+    
+    // Offset the start position along the direction vector
+    projectileStartPosition.addScaledVector(projectileDirection, projectileStartOffset);
+    // Adjust Y to be closer to a gun barrel height if desired, relative to camera
+    projectileStartPosition.y -= 0.2; // Example: lower the spawn point slightly
+
+    createProjectile(projectileStartPosition, projectileDirection, true); // true: firedByPlayer
+
+    // Raycasting for other interactions (knobs, safes, windows, lights)
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2(0, 0);
     raycaster.setFromCamera(pointer, camera);
-    const intersects = raycaster.intersectObjects([...lights, ...worldObjects, ...doors], true);
+    // Filter out enemies from direct interaction raycast as projectiles will handle them
+    const interactables = [...lights, ...doors, ...worldObjects.filter(obj => obj.userData.type !== 'enemy')];
+    const intersects = raycaster.intersectObjects(interactables, true);
+
     if (intersects.length > 0) {
         const hit = intersects[0];
         const hitObject = hit.object;
+
         if (hitObject.userData.doorKnob) {
             const door = hitObject.parent;
-            // Create a decal that remains with the door.
-            const decalTexture = new THREE.TextureLoader().load('textures/bulletHole.png'); // Ensure this texture exists
-            const decalMaterial = new THREE.MeshBasicMaterial({ 
-                map: decalTexture, 
-                transparent: true 
-            });
-            const decalGeometry = new THREE.PlaneGeometry(0.2, 0.2);
-            const decal = new THREE.Mesh(decalGeometry, decalMaterial);
-            // Set the decal's position and rotation to match the knob being shot.
-            decal.position.copy(hitObject.position);
-            decal.rotation.copy(hitObject.rotation);
-            decal.rotation.y = Math.PI / 2; // Align with the door surface
-            // Attach the decal to the door so it moves with it.
-            door.add(decal);
-            // Remove the doorknob so only the decal remains.
-            door.remove(hitObject);
-            //if (door.userData.locked) {
+            if (door.userData.locked) { // Check if the door is actually locked
+                // Create a decal that remains with the door.
+                const decalTexture = new THREE.TextureLoader().load('textures/bulletHole.png'); // Ensure this texture exists
+                const decalMaterial = new THREE.MeshBasicMaterial({ 
+                    map: decalTexture, 
+                    transparent: true 
+                });
+                const decalGeometry = new THREE.PlaneGeometry(0.2, 0.2);
+                const decal = new THREE.Mesh(decalGeometry, decalMaterial);
+                // Set the decal's position and rotation to match the knob being shot.
+                decal.position.copy(hitObject.position);
+                decal.rotation.copy(hitObject.rotation);
+                decal.rotation.y = Math.PI / 2; // Align with the door surface
+                // Attach the decal to the door so it moves with it.
+                door.add(decal);
+                // Remove the doorknob so only the decal remains.
+                door.remove(hitObject);
+
                 door.userData.locked = false;
                 door.userData.isOpen = true;
                 
@@ -3487,24 +3661,24 @@ function shoot() {
                 }
 
                 console.log("Locked door unlocked by shooting doorknob; decal applied.");
-            //} else {
+            } else {
                 console.log("Doorknob shot replaced with decal.");
-            //}
+            }
         } else if (hitObject.userData.isSafeDial) {
             const safe = hitObject.parent;
             if (safe && safe.userData && !safe.userData.isCracked && !safe.userData.pointsAwarded) {
                 crackSafe(safe);
-                createBulletHole(hit.point, hit.face.normal); // Add a bullet hole effect on the dial/safe
+                createBulletHole(hit.point, hit.face.normal);
             }
         } else if (hitObject.userData.isWindow) {
-            // New: Break the window when shot
             breakWindow(hitObject);
+            createBulletHole(hit.point, hit.face.normal);
         } else {
             // For other hits, create a bullet hole normally
             createBulletHole(hit.point, hit.face.normal);
-            const lightGroup = hitObject.parent;
-            if (lights.includes(lightGroup)) {
-                destroyLight(lightGroup);
+            const directLightHit = lights.includes(hitObject) ? hitObject : (lights.includes(hitObject.parent) ? hitObject.parent : null);
+            if (directLightHit && directLightHit.userData && !directLightHit.userData.isDestroyed) {
+                 destroyLight(directLightHit);
             }
         }
     }
@@ -3823,8 +3997,33 @@ function resetGame() {
     playerLives = 3;
     playerScore = 0;
     isGameOver = false;
+
+    // Remove enemies from scene, enemies array, and worldObjects
+    enemies.forEach(enemy => {
+        scene.remove(enemy);
+        const indexInWorldObjects = worldObjects.indexOf(enemy);
+        if (indexInWorldObjects > -1) {
+            worldObjects.splice(indexInWorldObjects, 1);
+        }
+    });
+    enemies.length = 0; // Clear the array
+
+    // Clear projectiles
+    projectiles.forEach(projectile => {
+        scene.remove(projectile);
+        const indexInWorldObjects = worldObjects.indexOf(projectile);
+        if (indexInWorldObjects > -1) {
+            worldObjects.splice(indexInWorldObjects, 1);
+        }
+    });
+    projectiles.length = 0;
+    
     document.getElementById('gameOver').style.display = 'none';
     updateUI();
+
+    // Reset player state
+    playerState = 'upright';
+    playerHeight = 1.7;
 
     // Reset player position to the active elevator
     if (activeElevator) {
@@ -3833,7 +4032,9 @@ function resetGame() {
             activeElevator.platform.position.y + playerHeight + 0.2,
             activeElevator.platform.position.z
         );
-    } // Else, consider a default spawn point
+    } else {
+        camera.position.set(SETTINGS.corridorWidth / 2, playerHeight, 0); // Default spawn
+    }
     playerVelocity.set(0, 0, 0);
 }
 
@@ -4056,6 +4257,203 @@ function updateUI() {
     }
 }
 
+
+function updateEnemies(deltaTime) {
+    if (!controls.isLocked || !camera) return; // Ensure camera and controls are ready
+
+    const playerCameraObject = controls.getObject();
+    const playerWorldPosition = new THREE.Vector3();
+    playerCameraObject.getWorldPosition(playerWorldPosition);
+
+    const playerBodyCenter = playerWorldPosition.clone();
+    playerBodyCenter.y -= playerHeight / 2;
+
+    enemies.forEach(enemy => {
+        if (enemy.userData.health <= 0) return;
+
+        const enemyPosition = enemy.position.clone();
+        const distanceToPlayer = enemyPosition.distanceTo(playerBodyCenter);
+
+        if (distanceToPlayer > ENEMY_SETTINGS.activationRadius) {
+            return;
+        }
+
+        const lookAtTarget = playerBodyCenter.clone();
+        lookAtTarget.y = enemyPosition.y;
+        enemy.lookAt(lookAtTarget);
+
+        const rayOrigin = enemyPosition.clone();
+        rayOrigin.y += ENEMY_SETTINGS.height * 0.4; // Enemy "eye" level
+
+        const directionToPlayer = playerBodyCenter.clone().sub(rayOrigin).normalize();
+        const raycaster = new THREE.Raycaster(rayOrigin, directionToPlayer, 0.1, ENEMY_SETTINGS.losMaxDistance);
+
+        const obstacles = worldObjects.filter(obj => obj !== enemy && obj.userData.type !== 'projectile' && obj !== playerCameraObject.parent && obj !== camera);
+        const intersects = raycaster.intersectObjects(obstacles, true);
+
+        let playerInLOS = true;
+        if (intersects.length > 0) {
+            if (intersects[0].distance < distanceToPlayer - 0.5) { // 0.5 tolerance
+                playerInLOS = false;
+            }
+        }
+
+        if (playerInLOS && distanceToPlayer <= ENEMY_SETTINGS.losMaxDistance) {
+            const currentTime = clock.getElapsedTime() * 1000;
+            if (currentTime > enemy.userData.lastShotTime + ENEMY_SETTINGS.fireRate) {
+                enemy.userData.lastShotTime = currentTime;
+
+                let firePosition;
+                const gun = enemy.userData.gun;
+                const storedGunLength = enemy.userData.gunLength;
+
+                if (gun && storedGunLength > 0) {
+                    // Projectile emits from the tip of the gun.
+                    // The gun's local Z+ axis is its "forward" after rotation.
+                    const localTipPosition = new THREE.Vector3(0, 0, storedGunLength / 2);
+                    firePosition = gun.localToWorld(localTipPosition.clone()).addScaledVector(directionToPlayer, 0.1); // Add small offset forward
+                } else {
+                    // Fallback if gun isn't set up (shouldn't happen with the new code)
+                    firePosition = enemy.position.clone();
+                    const forwardVector = new THREE.Vector3(0, 0, -1); // Enemy's local forward
+                    forwardVector.applyQuaternion(enemy.quaternion);
+                    firePosition.addScaledVector(forwardVector, ENEMY_SETTINGS.depth / 2 + 0.1); // Spawn slightly in front
+                }
+
+                createProjectile(firePosition, directionToPlayer, false, enemy);
+            }
+        }
+    });
+}
+
+function updateProjectiles(deltaTime) {
+    const playerCameraPosition = controls.getObject().position;
+    const playerBodyCenter = playerCameraPosition.clone();
+    playerBodyCenter.y -= playerHeight / 2;
+    const sceneRemoveThreshold = 100; // Define the threshold for removing out-of-bounds projectiles
+
+    const playerCollisionBox = new THREE.Box3().setFromCenterAndSize(
+        playerBodyCenter,
+        new THREE.Vector3(0.7, playerHeight, 0.7) // Player's collision box, adjust size as needed
+    );
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+        const projectile = projectiles[i];
+        let projectileNeedsRemoval = false;
+        let createHoleAt = null;
+        let holeNormal = null;
+
+        projectile.position.addScaledVector(projectile.userData.velocity, deltaTime);
+        const projectileBox = new THREE.Box3().setFromObject(projectile); // Calculate once per projectile
+
+        if (clock.getElapsedTime() - projectile.userData.spawnTime > 5) { // 5 seconds lifetime
+            projectileNeedsRemoval = true;
+        }
+
+        if (projectile.position.x > sceneRemoveThreshold || projectile.position.x < -sceneRemoveThreshold
+            || projectile.position.y > sceneRemoveThreshold || projectile.position.y < -sceneRemoveThreshold
+            || projectile.position.z > sceneRemoveThreshold || projectile.position.z < -sceneRemoveThreshold) {
+            projectileNeedsRemoval = true;
+        }
+
+        // Reason 3: Collision (if not already flagged for removal)
+        if (!projectileNeedsRemoval) {
+            // Check collision with player if fired by enemy
+            if (!projectile.userData.firedByPlayer && projectileBox.intersectsBox(playerCollisionBox)) {
+                applyDamageToPlayer(10); // Example damage
+                projectileNeedsRemoval = true;
+                createHoleAt = null; // No bullet hole on player
+            } else {
+                // Check collision with world objects (including enemies)
+                for (let j = worldObjects.length - 1; j >= 0; j--) {
+                    const wo = worldObjects[j];
+
+                    if (wo === projectile || wo.userData.type === 'projectile' || !wo.geometry || !wo.geometry.boundingBox) {
+                        continue;
+                    }
+
+                    // Explicitly skip collision check if the world object is the firer's gun
+                    const projFirer = projectile.userData.firer;
+                    if (projFirer && projFirer.userData.gun && wo === projFirer.userData.gun) {
+                         continue; // Skip collision with the firer's own gun
+                    }
+                     // Prevent projectile from colliding with the entity that fired it immediately
+                    if (projectile.userData.firedByPlayer && wo === camera.parent) continue; // Player projectile vs player
+                    // Add similar check if enemies can fire (wo === enemyThatFired)
+
+                    const objectWorldBox = new THREE.Box3().copy(wo.geometry.boundingBox).applyMatrix4(wo.matrixWorld);
+                    if (projectileBox.intersectsBox(objectWorldBox)) {
+                        projectileNeedsRemoval = true;
+                        // Default to creating a hole, can be overridden for self-hits or player hits
+                        createHoleAt = projectile.position.clone(); 
+
+                        if (wo.userData.type === 'enemy') {
+                            const enemyHit = wo;
+                            const projFirer = projectile.userData.firer;
+                            const projByPlayer = projectile.userData.firedByPlayer;
+                            
+                            console.log(`ENEMY PROJECTILE COLLISION DETAILS: Proj ID: ${projectile.id}, Firer: ${projFirer ? projFirer.name + ' (ID: ' + projFirer.id + ')' : 'None/Player'}, Hit Enemy: ${enemyHit.name} (ID: ${enemyHit.id}), ProjByPlayer: ${projByPlayer}`);
+                            holeNormal = projectile.userData.velocity.clone().normalize().negate(); // Only calculate normal if creating a hole
+                            if (projByPlayer) {
+                                // Player's projectile hits an enemy
+                                console.log("Player projectile hit enemy:", wo.name);
+                                playerScore += 100;
+                                updateUI();
+                                // wo.userData.health -= projectileDamage; // Implement health/damage
+                                // Remove enemy hit by player
+                                scene.remove(enemyHit);
+                                worldObjects.splice(j, 1); // wo is worldObjects[j]
+                                const woIndexInEnemies = enemies.indexOf(enemyHit);
+                                if (woIndexInEnemies > -1) {
+                                    enemies.splice(woIndexInEnemies, 1);
+                                }
+                            } else {
+                                // Enemy's projectile hits an enemy
+                                if (projFirer && enemyHit === projFirer) {
+                                    // Enemy shot itself
+                                    console.log(`   CONFIRMED SELF-HIT: ${projFirer.name} (ID: ${projFirer.id}) shot self. Projectile removed, enemy unharmed. No hole.`);
+                                    createHoleAt = null; // No bullet hole on self
+                                    // Firer (enemyHit) is NOT removed. Projectile will be removed.
+                                } else {
+                                    // Enemy projectile hits a DIFFERENT enemy (or firer is unknown)
+                                    // This is ACCIDENTAL FRIENDLY FIRE - the other enemy is hit.
+                                    console.log(`   FRIENDLY FIRE / UNKNOWN FIRER: Projectile from ${projFirer ? projFirer.name + ' (ID: ' + projFirer.id + ')' : 'Unknown/Player'} hit ${enemyHit.name} (ID: ${enemyHit.id}). ENEMY REMOVED!`);
+                                    scene.remove(enemyHit);
+                                    worldObjects.splice(j, 1); // wo is worldObjects[j]
+                                    const woIndexInEnemies = enemies.indexOf(enemyHit);
+                                    if (woIndexInEnemies > -1) {
+                                        enemies.splice(woIndexInEnemies, 1);
+                                    }
+                                }
+                            }
+                        } else { // Projectile hit a non-enemy world object
+                             holeNormal = projectile.userData.velocity.clone().normalize().negate(); // Calculate normal for non-enemy hits
+                             // console.log("Projectile hit non-enemy:", wo.name);
+                        }
+                        break; // Projectile is consumed
+
+                    }
+                }
+            }
+        }
+        // If projectile needs removal for any reason
+        if (projectileNeedsRemoval) {
+            scene.remove(projectile);
+            projectiles.splice(i, 1); // Remove from projectiles array (safe due to backward i loop)
+
+            // Consistently remove projectile from worldObjects
+            const projectileIndexInWorldObjects = worldObjects.indexOf(projectile);
+            if (projectileIndexInWorldObjects > -1) {
+                worldObjects.splice(projectileIndexInWorldObjects, 1);
+            }
+            if (createHoleAt && holeNormal) {
+                // createBulletHole(createHoleAt, holeNormal); // Re-enable if you want bullet holes on everything
+            }
+        }
+    }
+}
+
+
 // --- Animation Loop ---
 function animate() {
     if (isGameOver) return; // Stop animation loop if game is over
@@ -4066,6 +4464,8 @@ function animate() {
     if (controls.isLocked) {
         updatePlayer(deltaTime);
         updateElevators(deltaTime);
+        updateEnemies(deltaTime);
+        updateProjectiles(deltaTime);
         updateGarageDoors(deltaTime);
         updateUI();
         updateLODSystem();
@@ -4486,8 +4886,8 @@ function updateLODSystem() {
 // --- Start the application ---
 init();
 
-const enemyGeometry = new THREE.BoxGeometry(1, 2, 1); // Example geometry for an enemy
-const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Example material for an enemy
+//const enemyGeometry = new THREE.BoxGeometry(1, 2, 1); // Example geometry for an enemy
+//const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Example material for an enemy
 
 //const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
 //enemy.position.set(x, y, z); // Set the enemy's position

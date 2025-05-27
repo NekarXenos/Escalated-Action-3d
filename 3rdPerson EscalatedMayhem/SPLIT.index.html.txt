@@ -1,0 +1,1044 @@
+
+PROMPT:"create a third person view three.js webgame featuring a dynamic floor layout with a left an right wing of up to 3 rooms per side per wing (total 12 rooms per floor) with doors that can be openend and closed,  for an up to 30 floor building, with up to six dynamic elevators in the middle, and with up and down escalators on the outer ends. There should also be a roof level accessible by one elevator. There should be ceiling lights that can get shot down and damage enemies. The player and enemies should just be blocks for now. Use separate files for various elements to make it easier to troubleshoot and edit"
+
+// File: index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elevator Action 3D</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Inter', sans-serif; background-color: #1a1a1a; color: #f0f0f0; }
+        canvas { display: block; }
+        #ui-container {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+        }
+        #ui-container h2 {
+            color: #ffcc00;
+            margin-top: 0;
+            font-size: 1.2em;
+            text-align: center;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .control-group label {
+            font-size: 0.9em;
+            color: #cccccc;
+        }
+        .control-group input[type="number"] {
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px solid #555;
+            background-color: #333;
+            color: #f0f0f0;
+            width: 80px;
+        }
+        .control-group button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        .control-group button:hover {
+            background-color: #0056b3;
+            transform: translateY(-1px);
+        }
+        .control-group button:active {
+            transform: translateY(0);
+            box-shadow: none;
+        }
+        #message-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            display: none; /* Hidden by default */
+            text-align: center;
+            font-size: 1.2em;
+            z-index: 100;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+        }
+        #message-box button {
+            margin-top: 15px;
+            background-color: #28a745;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background-color 0.3s ease;
+        }
+        #message-box button:hover {
+            background-color: #218838;
+        }
+        #controls-info {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+            font-size: 0.85em;
+            color: #cccccc;
+        }
+        #controls-info h3 {
+            color: #ffcc00;
+            margin-top: 0;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        #controls-info ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        #controls-info li {
+            margin-bottom: 5px;
+        }
+        #controls-info li strong {
+            color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui-container">
+        <h2>Elevator Controls</h2>
+        <div class="control-group">
+            <label for="elevator-index">Elevator Index (0-5):</label>
+            <input type="number" id="elevator-index" min="0" max="5" value="0">
+        </div>
+        <div class="control-group">
+            <label for="target-floor">Target Floor (0-30):</label>
+            <input type="number" id="target-floor" min="0" max="30" value="0">
+        </div>
+        <div class="control-group">
+            <button id="call-elevator-btn">Call Elevator</button>
+        </div>
+    </div>
+
+    <div id="message-box">
+        <p id="message-text"></p>
+        <button id="message-ok-btn">OK</button>
+    </div>
+
+    <div id="controls-info">
+        <h3>Controls</h3>
+        <ul>
+            <li><strong>W / A / S / D</strong>: Move Player</li>
+            <li><strong>E</strong>: Interact (Open/Close Doors)</li>
+            <li><strong>Left Click</strong>: Shoot Lights</li>
+        </ul>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
+```javascript
+// File: main.js
+import * as THREE from 'three';
+// OrbitControls is removed for a custom third-person camera
+// import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Player } from './player.js';
+import { FloorManager } from './floorManager.js';
+import { ElevatorManager } from './elevatorManager.js';
+import { LightingManager } from './lightingManager.js';
+import { EscalatorManager } from './escalatorManager.js';
+import { DoorManager } from './doorManager.js';
+import { InteractionManager } from './interactionManager.js';
+import { placeDoors } from './doorPlacement.js'; // Import the door placement function
+import { EnemyManager } from './enemyManager.js'; // Import EnemyManager
+
+// --- Scene Setup ---
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true }); // Add antialiasing for smoother edges
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x222222); // Darker background for better contrast
+document.body.appendChild(renderer.domElement);
+
+// --- Global Variables ---
+// const controls = new OrbitControls(camera, renderer.domElement); // Removed for third-person camera
+const clock = new THREE.Clock();
+
+// --- Managers Initialization ---
+const player = new Player(scene, camera); // Pass camera to player for third-person view
+const floorManager = new FloorManager(scene);
+const elevatorManager = new ElevatorManager(scene);
+const lightingManager = new LightingManager(scene);
+const escalatorManager = new EscalatorManager(scene);
+const doorManager = new DoorManager(scene);
+const interactionManager = new InteractionManager(doorManager, elevatorManager, lightingManager, player, camera); // Pass lightingManager and elevatorManager
+
+const enemyManager = new EnemyManager(scene, floorManager); // Initialize EnemyManager
+
+// --- Initial Scene Setup ---
+placeDoors(doorManager); // Place all doors using the dedicated function
+
+// Add ambient light to illuminate the scene generally
+const ambientLight = new THREE.AmbientLight(0x404040, 0.5); // Soft white light
+scene.add(ambientLight);
+
+// Add a directional light for shadows and general illumination
+const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+directionalLight.position.set(50, 100, 50);
+directionalLight.castShadow = true; // Enable shadows for this light
+scene.add(directionalLight);
+
+// Configure shadow properties for better quality
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+directionalLight.shadow.camera.near = 0.5;
+directionalLight.shadow.camera.far = 500;
+directionalLight.shadow.camera.left = -100;
+directionalLight.shadow.camera.right = 100;
+directionalLight.shadow.camera.top = 100;
+directionalLight.shadow.camera.bottom = -100;
+
+// Enable shadows on the renderer
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer shadows
+
+// Set player and camera initial position
+player.mesh.position.set(0, 1.5, 0); // Start player on ground floor
+camera.position.set(0, 20, 50); // Initial camera position (will be updated by player)
+
+// --- UI Interaction ---
+const callElevatorBtn = document.getElementById('call-elevator-btn');
+const elevatorIndexInput = document.getElementById('elevator-index');
+const targetFloorInput = document.getElementById('target-floor');
+const messageBox = document.getElementById('message-box');
+const messageText = document.getElementById('message-text');
+const messageOkBtn = document.getElementById('message-ok-btn');
+
+callElevatorBtn.addEventListener('click', () => {
+    const elevatorIndex = parseInt(elevatorIndexInput.value);
+    const targetFloor = parseInt(targetFloorInput.value);
+
+    if (isNaN(elevatorIndex) || isNaN(targetFloor)) {
+        showMessage("Please enter valid numbers for elevator index and target floor.");
+        return;
+    }
+
+    if (elevatorIndex < 0 || elevatorIndex >= elevatorManager.elevators.length) {
+        showMessage(`Elevator index must be between 0 and ${elevatorManager.elevators.length - 1}.`);
+        return;
+    }
+
+    if (targetFloor < 0 || targetFloor > floorManager.floorCount) { // Use floorManager.floorCount for max floor
+        showMessage(`Target floor must be between 0 and ${floorManager.floorCount}.`);
+        return;
+    }
+
+    elevatorManager.moveElevatorToFloor(elevatorIndex, targetFloor);
+    showMessage(`Elevator ${elevatorIndex} called to floor ${targetFloor}.`);
+});
+
+messageOkBtn.addEventListener('click', () => {
+    messageBox.style.display = 'none';
+});
+
+function showMessage(message) {
+    messageText.textContent = message;
+    messageBox.style.display = 'block';
+}
+
+// --- Animation Loop ---
+function animate() {
+    requestAnimationFrame(animate);
+
+    const delta = clock.getDelta();
+
+    player.update(delta, floorManager.floors); // Pass floors for collision detection
+    elevatorManager.update(delta);
+    escalatorManager.update(player, delta);
+    doorManager.update(player); // Update door state based on player proximity
+    enemyManager.update(delta, player, lightingManager.lights); // Update enemies and pass lights for interaction
+
+    // Update camera to follow player (third-person view)
+    // The player's update method now handles camera positioning.
+    // If you want a fixed third-person view, you can set it here:
+    // camera.position.copy(player.mesh.position).add(new THREE.Vector3(0, 5, 10));
+    // camera.lookAt(player.mesh.position);
+
+    renderer.render(scene, camera);
+}
+
+// --- Handle Window Resizing ---
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Start the animation loop
+animate();
+
+```javascript
+// File: player.js
+import * as THREE from 'three';
+
+export class Player {
+    constructor(scene, camera) {
+        this.scene = scene;
+        this.camera = camera; // Reference to the main camera
+        this.geometry = new THREE.BoxGeometry(1, 2, 1);
+        this.material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+        this.mesh = new THREE.Mesh(this.geometry, this.material);
+        this.mesh.position.set(0, 1.5, 0); // Start slightly above floor
+        this.mesh.castShadow = true; // Player casts shadow
+        this.mesh.receiveShadow = true; // Player receives shadow
+        scene.add(this.mesh);
+
+        this.velocity = new THREE.Vector3();
+        this.speed = 5;
+        this.gravity = -9.8; // Gravity constant
+        this.onGround = false; // Flag to check if player is on ground
+
+        this.initControls();
+    }
+
+    initControls() {
+        this.keys = {};
+        window.addEventListener('keydown', (e) => this.keys[e.code] = true);
+        window.addEventListener('keyup', (e) => this.keys[e.code] = false);
+
+        // Mouse click for shooting
+        window.addEventListener('click', (e) => {
+            if (e.button === 0) { // Left mouse button
+                // This will be handled by InteractionManager
+                // For now, it could be a placeholder if shooting logic is in Player
+            }
+        });
+    }
+
+    update(delta, floors) {
+        // Apply gravity
+        if (!this.onGround) {
+            this.velocity.y += this.gravity * delta;
+        }
+
+        // Reset horizontal velocity
+        this.velocity.x = 0;
+        this.velocity.z = 0;
+
+        // Handle horizontal movement based on keys
+        const moveSpeed = this.speed * delta;
+        if (this.keys['KeyW']) this.velocity.z -= moveSpeed;
+        if (this.keys['KeyS']) this.velocity.z += moveSpeed;
+        if (this.keys['KeyA']) this.velocity.x -= moveSpeed;
+        if (this.keys['KeyD']) this.velocity.x += moveSpeed;
+
+        // Normalize diagonal movement
+        if (this.velocity.x !== 0 && this.velocity.z !== 0) {
+            this.velocity.normalize().multiplyScalar(moveSpeed);
+            this.velocity.y = this.velocity.y / moveSpeed * (this.speed * delta); // Preserve vertical velocity
+        }
+
+        // Update player position
+        this.mesh.position.add(this.velocity);
+
+        // --- Collision Detection with Floors ---
+        this.onGround = false;
+        const playerBottom = this.mesh.position.y - this.geometry.parameters.height / 2;
+
+        for (let floorGroup of floors) {
+            // Assuming floorGroup contains the hallway mesh at index 0
+            const floorMesh = floorGroup.children[0];
+            if (floorMesh) {
+                const floorTop = floorMesh.position.y + floorMesh.geometry.parameters.height / 2;
+
+                // Simple AABB collision check
+                // Check if player is above the floor and within its XZ bounds
+                if (playerBottom <= floorTop + 0.1 && playerBottom >= floorTop - 0.5) { // Small tolerance for landing
+                    const playerMinX = this.mesh.position.x - this.geometry.parameters.width / 2;
+                    const playerMaxX = this.mesh.position.x + this.geometry.parameters.width / 2;
+                    const playerMinZ = this.mesh.position.z - this.geometry.parameters.depth / 2;
+                    const playerMaxZ = this.mesh.position.z + this.geometry.parameters.depth / 2;
+
+                    const floorMinX = floorMesh.position.x - floorMesh.geometry.parameters.width / 2;
+                    const floorMaxX = floorMesh.position.x + floorMesh.geometry.parameters.width / 2;
+                    const floorMinZ = floorMesh.position.z - floorMesh.geometry.parameters.depth / 2;
+                    const floorMaxZ = floorMesh.position.z + floorMesh.geometry.parameters.depth / 2;
+
+                    if (playerMaxX > floorMinX && playerMinX < floorMaxX &&
+                        playerMaxZ > floorMinZ && playerMinZ < floorMaxZ) {
+                        this.mesh.position.y = floorTop + this.geometry.parameters.height / 2;
+                        this.velocity.y = 0;
+                        this.onGround = true;
+                        break; // Player is on a floor, no need to check other floors
+                    }
+                }
+            }
+        }
+
+        // --- Camera Follow Logic (Third-Person) ---
+        const cameraOffset = new THREE.Vector3(0, 5, 10); // Offset from player
+        this.camera.position.copy(this.mesh.position).add(cameraOffset);
+        this.camera.lookAt(this.mesh.position.x, this.mesh.position.y + 1, this.mesh.position.z); // Look slightly above player's base
+    }
+}
+```javascript
+// File: floorManager.js
+import * as THREE from 'three';
+
+export class FloorManager {
+    constructor(scene) {
+        this.scene = scene;
+        this.floors = [];
+        this.floorCount = 30; // Total number of floors
+        this.createFloors();
+        this.createRoof(); // Add a roof
+    }
+
+    createFloors() {
+        const roomSize = 10;
+        const floorHeight = 5; // Height between floors
+
+        for (let floorIndex = 0; floorIndex < this.floorCount; floorIndex++) {
+            const floorGroup = new THREE.Group();
+            const yOffset = floorIndex * floorHeight;
+
+            // Center hallway (floor)
+            const hallwayFloor = new THREE.Mesh(
+                new THREE.BoxGeometry(roomSize * 2, 0.2, roomSize * 3),
+                new THREE.MeshStandardMaterial({ color: 0x888888 })
+            );
+            hallwayFloor.position.y = yOffset;
+            hallwayFloor.receiveShadow = true; // Floor receives shadows
+            floorGroup.add(hallwayFloor);
+
+            // Rooms left and right
+            for (let side = -1; side <= 1; side += 2) { // -1 for left, 1 for right
+                for (let i = 0; i < 3; i++) { // 3 rooms per side
+                    const roomZOffset = (i - 1) * roomSize;
+                    const roomXOffset = side * roomSize * 1.5;
+
+                    // Room Floor
+                    const roomFloor = new THREE.Mesh(
+                        new THREE.BoxGeometry(roomSize, 0.2, roomSize),
+                        new THREE.MeshStandardMaterial({ color: 0xaaaaaa })
+                    );
+                    roomFloor.position.set(roomXOffset, yOffset, roomZOffset);
+                    roomFloor.receiveShadow = true;
+                    floorGroup.add(roomFloor);
+
+                    // Room Walls (Back, Front, Inner, Outer)
+                    const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+                    const wallHeight = 3; // Height of the walls
+
+                    // Back Wall
+                    const backWall = new THREE.Mesh(
+                        new THREE.BoxGeometry(roomSize, wallHeight, 0.2),
+                        wallMaterial
+                    );
+                    backWall.position.set(roomXOffset, yOffset + wallHeight / 2, roomZOffset - roomSize / 2);
+                    backWall.castShadow = true;
+                    backWall.receiveShadow = true;
+                    floorGroup.add(backWall);
+
+                    // Front Wall
+                    const frontWall = new THREE.Mesh(
+                        new THREE.BoxGeometry(roomSize, wallHeight, 0.2),
+                        wallMaterial
+                    );
+                    frontWall.position.set(roomXOffset, yOffset + wallHeight / 2, roomZOffset + roomSize / 2);
+                    frontWall.castShadow = true;
+                    frontWall.receiveShadow = true;
+                    floorGroup.add(frontWall);
+
+                    // Inner Wall (between room and hallway) - This will have the door
+                    // This wall will be handled by door placement or integrated with door geometry.
+                    // For now, let's create the outer wall and side walls.
+
+                    // Outer Wall
+                    const outerWall = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.2, wallHeight, roomSize),
+                        wallMaterial
+                    );
+                    outerWall.position.set(roomXOffset + side * roomSize / 2, yOffset + wallHeight / 2, roomZOffset);
+                    outerWall.castShadow = true;
+                    outerWall.receiveShadow = true;
+                    floorGroup.add(outerWall);
+
+                    // Side Walls for Hallway (to enclose the hallway)
+                    // These are the walls running along the length of the hallway,
+                    // separating it from the outside or other structures.
+                    if (i === 0 && side === -1) { // Only create once per floor for the left side of hallway
+                        const hallwaySideWallLeft = new THREE.Mesh(
+                            new THREE.BoxGeometry(0.2, wallHeight, roomSize * 3), // Length of hallway
+                            wallMaterial
+                        );
+                        hallwaySideWallLeft.position.set(-roomSize, yOffset + wallHeight / 2, 0);
+                        hallwaySideWallLeft.castShadow = true;
+                        hallwaySideWallLeft.receiveShadow = true;
+                        floorGroup.add(hallwaySideWallLeft);
+                    }
+                    if (i === 0 && side === 1) { // Only create once per floor for the right side of hallway
+                        const hallwaySideWallRight = new THREE.Mesh(
+                            new THREE.BoxGeometry(0.2, wallHeight, roomSize * 3), // Length of hallway
+                            wallMaterial
+                        );
+                        hallwaySideWallRight.position.set(roomSize, yOffset + wallHeight / 2, 0);
+                        hallwaySideWallRight.castShadow = true;
+                        hallwaySideWallRight.receiveShadow = true;
+                        floorGroup.add(hallwaySideWallRight);
+                    }
+                }
+            }
+
+            this.floors.push(floorGroup);
+            this.scene.add(floorGroup);
+        }
+    }
+
+    createRoof() {
+        const roomSize = 10;
+        const roofHeight = 0.5;
+        const yOffset = this.floorCount * 5; // Position above the last floor
+
+        const roof = new THREE.Mesh(
+            new THREE.BoxGeometry(roomSize * 4, roofHeight, roomSize * 4), // Larger than a single floor
+            new THREE.MeshStandardMaterial({ color: 0x666666 })
+        );
+        roof.position.set(0, yOffset + roofHeight / 2, 0);
+        roof.receiveShadow = true;
+        this.scene.add(roof);
+        this.roof = roof; // Store reference to the roof
+    }
+}
+```javascript
+// File: doorManager.js
+import * as THREE from 'three';
+
+export class DoorManager {
+    constructor(scene) {
+        this.scene = scene;
+        this.doors = [];
+    }
+
+    createDoor(position) {
+        const doorWidth = 1;
+        const doorHeight = 3;
+        const doorDepth = 0.2;
+
+        const door = new THREE.Mesh(
+            new THREE.BoxGeometry(doorWidth, doorHeight, doorDepth),
+            new THREE.MeshStandardMaterial({ color: 0x552200 })
+        );
+        door.position.copy(position);
+        door.userData.open = false; // Custom property to track door state
+        door.castShadow = true; // Doors cast shadows
+        door.receiveShadow = true; // Doors receive shadows
+
+        this.scene.add(door);
+        this.doors.push(door);
+        return door;
+    }
+
+    toggleDoor(door) {
+        door.userData.open = !door.userData.open;
+        // Make the door invisible when open, or move it.
+        // For simplicity, we'll make it invisible.
+        door.visible = !door.userData.open;
+        console.log(`Door at ${door.position.x}, ${door.position.y}, ${door.position.z} is now ${door.userData.open ? 'OPEN' : 'CLOSED'}`);
+    }
+
+    // This update method is now simplified as InteractionManager handles the toggle
+    update(player) {
+        // No automatic opening/closing based on intersection here.
+        // The InteractionManager will explicitly call toggleDoor when 'E' is pressed near a door.
+    }
+}
+```javascript
+// File: doorPlacement.js
+import * as THREE from 'three';
+
+export function placeDoors(doorManager) {
+    const floors = 30; // Total number of floors
+    const roomCount = 3; // 3 rooms per side
+    const roomSpacing = 10; // Spacing between rooms
+    const floorHeight = 5; // Height between floors
+
+    for (let floor = 0; floor < floors; floor++) {
+        const y = floor * floorHeight + 1.5; // Y position for the door center
+
+        // Place doors for the center hallway (leading to elevators)
+        // These are the doors from the main hallway into the elevator area
+        for (let i = -1; i <= 1; i += 2) { // One door on each side of the central elevator area
+            const elevatorDoorPos = new THREE.Vector3(i * 2, y, 0); // Adjust X based on elevator positions
+            doorManager.createDoor(elevatorDoorPos);
+        }
+
+
+        for (let i = 0; i < roomCount; i++) {
+            const zOffset = (i - 1) * roomSpacing; // Z position for rooms
+
+            // Left wing doors (leading from hallway into rooms)
+            const leftDoorPos = new THREE.Vector3(-roomSpacing * 0.5, y, zOffset); // Adjust X to be at hallway entrance
+            doorManager.createDoor(leftDoorPos);
+
+            // Right wing doors (leading from hallway into rooms)
+            const rightDoorPos = new THREE.Vector3(roomSpacing * 0.5, y, zOffset); // Adjust X to be at hallway entrance
+            doorManager.createDoor(rightDoorPos);
+        }
+    }
+}
+```javascript
+// File: elevatorManager.js
+import * as THREE from 'three';
+
+export class ElevatorManager {
+    constructor(scene) {
+        this.scene = scene;
+        this.elevators = [];
+        this.floorHeight = 5; // Height between floors
+        this.maxFloor = 30; // Max floor index (0-30)
+        this.createElevators();
+    }
+
+    createElevators() {
+        const elevatorWidth = 3;
+        const elevatorHeight = 3;
+        const elevatorDepth = 3;
+        const gap = 5; // Gap between elevators
+
+        for (let i = 0; i < 6; i++) { // Six elevators
+            const elevator = new THREE.Mesh(
+                new THREE.BoxGeometry(elevatorWidth, elevatorHeight, elevatorDepth),
+                new THREE.MeshStandardMaterial({ color: 0xffcc00, transparent: true, opacity: 0.8 })
+            );
+            elevator.position.set((i - 2.5) * gap, 1.5, 0); // Centered row of elevators
+            elevator.castShadow = true;
+            elevator.receiveShadow = true;
+            this.scene.add(elevator);
+            this.elevators.push({ mesh: elevator, targetFloor: 0, currentFloor: 0 });
+        }
+        // Make one elevator go to the roof level (floor 30)
+        // Let's say the first elevator (index 0) can go to the roof.
+        // The max target floor for this elevator will be this.maxFloor.
+        // Other elevators will have max target floor as this.maxFloor - 1.
+    }
+
+    update(delta) {
+        for (let e of this.elevators) {
+            const targetY = e.targetFloor * this.floorHeight + 1.5; // Calculate target Y position
+            const currentY = e.mesh.position.y;
+            const distance = targetY - currentY;
+
+            if (Math.abs(distance) > 0.1) { // Move only if not very close to target
+                e.mesh.position.y += distance * delta * 0.5; // Smooth movement
+                e.currentFloor = Math.round((e.mesh.position.y - 1.5) / this.floorHeight);
+            } else {
+                e.mesh.position.y = targetY; // Snap to target
+                e.currentFloor = e.targetFloor;
+            }
+        }
+    }
+
+    moveElevatorToFloor(index, floor) {
+        if (this.elevators[index]) {
+            // Ensure the floor is within bounds for the specific elevator
+            if (index === 0) { // First elevator can go to roof
+                this.elevators[index].targetFloor = Math.min(floor, this.maxFloor);
+            } else { // Other elevators go up to floor 29
+                this.elevators[index].targetFloor = Math.min(floor, this.maxFloor - 1);
+            }
+            console.log(`Elevator ${index} set to target floor ${this.elevators[index].targetFloor}`);
+        }
+    }
+
+    // Method to get the closest elevator to a given position
+    getClosestElevator(position) {
+        let closestElevator = null;
+        let minDistance = Infinity;
+
+        for (let i = 0; i < this.elevators.length; i++) {
+            const elevator = this.elevators[i].mesh;
+            const dist = elevator.position.distanceTo(position);
+            if (dist < minDistance) {
+                minDistance = dist;
+                closestElevator = { elevator: this.elevators[i], index: i, distance: dist };
+            }
+        }
+        return closestElevator;
+    }
+}
+```javascript
+// File: escalatorManager.js
+import * as THREE from 'three';
+
+export class EscalatorManager {
+    constructor(scene) {
+        this.scene = scene;
+        this.escalators = [];
+        this.floorCount = 30; // Total number of floors
+        this.floorHeight = 5; // Height between floors
+        this.createEscalators();
+    }
+
+    createEscalators() {
+        const escalatorWidth = 4;
+        const escalatorHeight = 5; // This is the vertical rise, not the slant height
+        const escalatorDepth = 2;
+        const spacing = 10; // Spacing for room layout, used for positioning
+
+        for (let f = 0; f < this.floorCount - 1; f++) { // Escalators go up to the second-to-last floor
+            const yOffset = f * this.floorHeight; // Base Y position for the floor
+            const directions = ['up', 'down'];
+
+            directions.forEach((dir, idx) => {
+                const escalatorGeometry = new THREE.BoxGeometry(escalatorWidth, escalatorHeight, escalatorDepth);
+                const escalatorMaterial = new THREE.MeshStandardMaterial({ color: dir === 'up' ? 0x0000ff : 0xff0000 });
+                const escalator = new THREE.Mesh(escalatorGeometry, escalatorMaterial);
+
+                // Position escalators on the outer ends, e.g., near the right wing
+                const xPos = 20; // Further out on the right side
+                // Z position to place them distinctly, e.g., one forward, one backward
+                const zOffset = (idx === 0 ? -1 : 1) * (spacing * 1.5);
+                escalator.position.set(xPos, yOffset + escalatorHeight / 2, zOffset);
+
+                // Rotate to simulate a slope
+                escalator.rotation.x = Math.PI / 8 * (dir === 'up' ? 1 : -1); // Rotate around X for slope
+                escalator.castShadow = true;
+                escalator.receiveShadow = true;
+
+                this.scene.add(escalator);
+                this.escalators.push({ mesh: escalator, direction: dir, fromFloor: f });
+            });
+        }
+    }
+
+    update(player, delta) {
+        const playerBox = new THREE.Box3().setFromObject(player.mesh);
+
+        for (let e of this.escalators) {
+            const escalatorBox = new THREE.Box3().setFromObject(e.mesh);
+            // Check for intersection
+            if (playerBox.intersectsBox(escalatorBox)) {
+                const speed = 2; // Speed at which player moves on escalator
+                if (e.direction === 'up') {
+                    player.mesh.position.y += speed * delta;
+                    // Ensure player doesn't go above the next floor's height if they are already at the top
+                    if (player.mesh.position.y > (e.fromFloor + 1) * this.floorHeight + player.geometry.parameters.height / 2) {
+                        player.mesh.position.y = (e.fromFloor + 1) * this.floorHeight + player.geometry.parameters.height / 2;
+                    }
+                } else { // 'down'
+                    player.mesh.position.y -= speed * delta;
+                    // Ensure player doesn't go below the current floor's height if they are already at the bottom
+                    if (player.mesh.position.y < e.fromFloor * this.floorHeight + player.geometry.parameters.height / 2) {
+                        player.mesh.position.y = e.fromFloor * this.floorHeight + player.geometry.parameters.height / 2;
+                    }
+                }
+                // Optional: Adjust player's XZ position slightly to stay on escalator
+                // This would require more complex logic to align with the escalator's rotation.
+            }
+        }
+    }
+}
+```javascript
+// File: interactionManager.js
+import * as THREE from 'three';
+
+export class InteractionManager {
+    constructor(doorManager, elevatorManager, lightingManager, player, camera) {
+        this.doorManager = doorManager;
+        this.elevatorManager = elevatorManager;
+        this.lightingManager = lightingManager;
+        this.player = player;
+        this.camera = camera;
+        this.raycaster = new THREE.Raycaster();
+        this.init();
+    }
+
+    init() {
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyE') {
+                this.tryInteract();
+            }
+        });
+
+        // Event listener for mouse click to shoot lights
+        window.addEventListener('click', (e) => {
+            if (e.button === 0) { // Left mouse button
+                this.shootLight(e);
+            }
+        });
+    }
+
+    tryInteract() {
+        const playerPos = this.player.mesh.position;
+
+        // Try to interact with doors
+        let interactedWithDoor = false;
+        for (let door of this.doorManager.doors) {
+            const dist = door.position.distanceTo(playerPos);
+            if (dist < 3) { // Increased interaction distance for doors
+                this.doorManager.toggleDoor(door);
+                interactedWithDoor = true;
+                break; // Interact with only one door at a time
+            }
+        }
+
+        // If no door was interacted with, try to interact with elevators
+        if (!interactedWithDoor) {
+            const closestElevator = this.elevatorManager.getClosestElevator(playerPos);
+            if (closestElevator && closestElevator.distance < 4) { // Interaction distance for elevators
+                // Open a UI for elevator controls or call a specific elevator
+                // For now, we'll just log and rely on the UI buttons.
+                this.showMessage(`Near Elevator ${closestElevator.index}. Use UI to call.`);
+            }
+        }
+    }
+
+    shootLight(event) {
+        // Calculate mouse position in normalized device coordinates (-1 to +1)
+        const mouse = new THREE.Vector2(
+            (event.clientX / window.innerWidth) * 2 - 1,
+            -(event.clientY / window.innerHeight) * 2 + 1
+        );
+
+        // Update the raycaster with the camera and mouse position
+        this.raycaster.setFromCamera(mouse, this.camera);
+
+        // Check for intersections with lights
+        const lightsMeshes = this.lightingManager.lights.map(l => l.light); // PointLight is a type of Object3D
+        const intersects = this.raycaster.intersectObjects(lightsMeshes, true);
+
+        if (intersects.length > 0) {
+            const intersectedLight = intersects[0].object;
+            // Find the light in the LightingManager's array
+            const lightIndex = this.lightingManager.lights.findIndex(l => l.light === intersectedLight);
+
+            if (lightIndex !== -1) {
+                this.lightingManager.shootLight(lightIndex);
+                this.showMessage(`Light ${lightIndex} shot down!`);
+            }
+        }
+    }
+
+    showMessage(message) {
+        const messageBox = document.getElementById('message-box');
+        const messageText = document.getElementById('message-text');
+        messageText.textContent = message;
+        messageBox.style.display = 'block';
+    }
+}
+```javascript
+// File: lightingManager.js
+import * as THREE from 'three';
+
+export class LightingManager {
+    constructor(scene) {
+        this.scene = scene;
+        this.lights = [];
+        this.floorCount = 30; // Total number of floors
+        this.floorHeight = 5; // Height between floors
+        this.createLights();
+    }
+
+    createLights() {
+        for (let f = 0; f < this.floorCount; f++) {
+            const yOffset = f * this.floorHeight + 4.5; // Ceiling height for lights
+
+            // Lights in the main hallway
+            for (let i = -1; i <= 1; i++) { // Place lights along Z-axis in hallway
+                const light = new THREE.PointLight(0xffffff, 1, 20); // Color, intensity, distance
+                light.position.set(0, yOffset, i * 10);
+                light.castShadow = true; // Lights can cast shadows
+                this.scene.add(light);
+                this.lights.push({ light, active: true, initialIntensity: light.intensity });
+            }
+
+            // Lights in the left and right wing rooms (example placement)
+            const roomSize = 10;
+            const roomXOffset = roomSize * 1.5;
+            for (let side = -1; side <= 1; side += 2) {
+                for (let i = 0; i < 3; i++) {
+                    const roomZOffset = (i - 1) * roomSize;
+                    const light = new THREE.PointLight(0xffffff, 0.7, 15); // Slightly dimmer for rooms
+                    light.position.set(side * roomXOffset, yOffset, roomZOffset);
+                    light.castShadow = true;
+                    this.scene.add(light);
+                    this.lights.push({ light, active: true, initialIntensity: light.intensity });
+                }
+            }
+        }
+    }
+
+    shootLight(index) {
+        if (this.lights[index] && this.lights[index].active) {
+            this.lights[index].light.intensity = 0; // Turn off the light
+            this.lights[index].active = false;
+            console.log(`Light ${index} has been shot down.`);
+            // Add logic to affect enemies later (e.g., in EnemyManager update)
+        }
+    }
+}
+```javascript
+// File: enemy.js
+import * as THREE from 'three';
+
+export class Enemy {
+    constructor(scene, position) {
+        this.scene = scene;
+        this.geometry = new THREE.BoxGeometry(1, 2, 1);
+        this.material = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red block for enemy
+        this.mesh = new THREE.Mesh(this.geometry, this.material);
+        this.mesh.position.copy(position);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        scene.add(this.mesh);
+
+        this.health = 100;
+        this.speed = 2;
+        this.direction = new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+        this.patrolRadius = 5; // How far it patrols from its spawn point
+        this.spawnPoint = position.clone();
+
+        this.lastDirectionChange = 0;
+        this.directionChangeInterval = 2 + Math.random() * 3; // Change direction every 2-5 seconds
+    }
+
+    update(delta, player, lights) {
+        // Simple patrolling behavior
+        this.lastDirectionChange += delta;
+        if (this.lastDirectionChange > this.directionChangeInterval) {
+            this.direction.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+            this.lastDirectionChange = 0;
+            this.directionChangeInterval = 2 + Math.random() * 3;
+        }
+
+        // Move the enemy
+        this.mesh.position.x += this.direction.x * this.speed * delta;
+        this.mesh.position.z += this.direction.z * this.speed * delta;
+
+        // Keep enemy within a patrol radius around its spawn point
+        const currentDistance = this.mesh.position.distanceTo(this.spawnPoint);
+        if (currentDistance > this.patrolRadius) {
+            // Move back towards spawn point
+            this.direction.subVectors(this.spawnPoint, this.mesh.position).normalize();
+            this.mesh.position.x += this.direction.x * this.speed * delta;
+            this.mesh.position.z += this.direction.z * this.speed * delta;
+        }
+
+        // --- Light Interaction (Damage when lights are off) ---
+        // Find the current floor the enemy is on
+        const enemyFloorY = Math.floor((this.mesh.position.y - 1.5) / 5) * 5 + 1.5; // Approximate floor center Y
+
+        for (let lightInfo of lights) {
+            const light = lightInfo.light;
+            // Check if light is on the same floor as the enemy and is within range
+            if (light.position.y - 4.5 === enemyFloorY - 1.5) { // Compare floor Y levels
+                const distToLight = this.mesh.position.distanceTo(light.position);
+                if (distToLight < light.distance) { // Within light's effective range
+                    if (!lightInfo.active && lightInfo.initialIntensity > 0) { // If light is shot down and was initially active
+                        // Apply damage over time or a one-time damage
+                        this.takeDamage(10 * delta); // Example: 10 damage per second in darkness
+                        // console.log(`Enemy at ${this.mesh.position.x.toFixed(1)},${this.mesh.position.y.toFixed(1)},${this.mesh.position.z.toFixed(1)} taking damage. Health: ${this.health.toFixed(1)}`);
+                    }
+                }
+            }
+        }
+
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health < 0) this.health = 0;
+        // console.log(`Enemy health: ${this.health}`);
+        // Optional: Change color to indicate damage
+        this.mesh.material.color.setHex(0xff0000 + (Math.floor(this.health / 100 * 0x55) << 8)); // Fades to darker red
+    }
+
+    die() {
+        this.scene.remove(this.mesh);
+        // Remove from enemyManager's list
+        this.mesh.parent = null; // Detach from scene graph
+        console.log('Enemy destroyed!');
+    }
+}
+```javascript
+// File: enemyManager.js
+import * as THREE from 'three';
+import { Enemy } from './enemy.js';
+
+export class EnemyManager {
+    constructor(scene, floorManager) {
+        this.scene = scene;
+        this.floorManager = floorManager;
+        this.enemies = [];
+        this.spawnEnemies();
+    }
+
+    spawnEnemies() {
+        const enemiesPerFloor = 2;
+        const roomSize = 10;
+        const floorHeight = 5;
+
+        for (let floorIndex = 0; floorIndex < this.floorManager.floorCount; floorIndex++) {
+            const yOffset = floorIndex * floorHeight + 1.5; // Y position for enemy base
+
+            for (let i = 0; i < enemiesPerFloor; i++) {
+                // Spawn enemies in random rooms or hallway sections
+                const randomSide = Math.random() < 0.5 ? -1 : 1;
+                const randomRoomIndex = Math.floor(Math.random() * 3) - 1; // -1, 0, 1 for rooms
+                const randomZOffset = randomRoomIndex * roomSize;
+                const randomXOffset = randomSide * roomSize * 1.5;
+
+                // Randomly choose between hallway or a room
+                let spawnX, spawnZ;
+                if (Math.random() < 0.5) { // Spawn in hallway
+                    spawnX = (Math.random() - 0.5) * (roomSize * 2 - 2); // Within hallway width
+                    spawnZ = (Math.random() - 0.5) * (roomSize * 3 - 2); // Within hallway length
+                } else { // Spawn in a room
+                    spawnX = randomXOffset + (Math.random() - 0.5) * (roomSize - 2);
+                    spawnZ = randomZOffset + (Math.random() - 0.5) * (roomSize - 2);
+                }
+
+                const position = new THREE.Vector3(spawnX, yOffset, spawnZ);
+                this.enemies.push(new Enemy(this.scene, position));
+            }
+        }
+    }
+
+    update(delta, player, lights) {
+        // Update each enemy
+        for (let i = this.enemies.length - 1; i >= 0; i--) {
+            const enemy = this.enemies[i];
+            enemy.update(delta, player, lights);
+            if (enemy.health <= 0) {
+                this.enemies.splice(i, 1); // Remove dead enemies
+            }
+        }
+    }
+}

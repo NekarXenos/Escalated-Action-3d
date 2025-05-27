@@ -1,8 +1,6 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { FontLoader } from 'three/addons/loaders/FontLoader.js';
-import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
-import { calculateEscalatorBoost, animateActiveEscalatorSteps } from './escalatorTMPd.js';
+import { calculateEscalatorBoost, animateActiveEscalatorSteps } from './escalator_TMPb.js';
 
 // IMPORTANT: Left is +X and Right is -X in this world
 // Up is +Y and Down is -Y in this world
@@ -53,7 +51,6 @@ const escalatorWidth = SETTINGS.escalatorWidth;
 const roomSize = SETTINGS.roomSize; // Use the defined room size
 const elevatorSize = SETTINGS.elevatorSize; // Use the defined elevator size
 // let buildingWidth = SETTINGS.corridorWidth + (2 * roomSize); // Total width of the building - will be recalculated
-const worldCentre = new THREE.Vector3(SETTINGS.corridorWidth / 2, 0, -8); // Center of the world for reference
 
 const worldObjects = []; // For basic collision detection
 const doors = []; // To store door data for interaction
@@ -95,7 +92,7 @@ const escalatorEndsB = {
     up: {},   // For up steps if needed in future
     down: {}  // For down-step ending points
 };
-let playerOnEscalator = { type: null, floor: null, wing: null }; // Track which escalator area player is on
+let playerOnEscalator = { type: null, floor: null }; // Track which escalator area player is on
 
 // --- LOD System ---
 const allRoomsData = []; // Stores data for each room for LOD management
@@ -184,7 +181,6 @@ function init() {
     animate();
 }
 
-
 // --- Elevator Creation ---
 function createElevator(config) {
     const elevatorObj = {
@@ -262,7 +258,7 @@ function createElevator(config) {
 
     // 4. Elevator Shaft Ceiling (Topmost structure of the shaft)
     const shaftCeilingY = (config.maxFloorIndex + 1) * SETTINGS.floorHeight; // One floor height above max floor served
-    const shaftCeilingGeo = new THREE.BoxGeometry(config.shaftWidth, floorDepth-0.02, config.shaftDepth);
+    const shaftCeilingGeo = new THREE.BoxGeometry(config.shaftWidth, floorDepth, config.shaftDepth);
     elevatorObj.shaftCeiling = new THREE.Mesh(shaftCeilingGeo, config.shaftMaterial); // e.g., concrete or floorMaterial
     elevatorObj.shaftCeiling.name = `ElevatorShaftCeiling_${config.id}`;
     elevatorObj.shaftCeiling.position.set(config.x, shaftCeilingY - floorDepth / 2, config.z);
@@ -303,25 +299,6 @@ function createElevator(config) {
     }
     return elevatorObj;
 }
-
-// --- Enemy Settings ---
-const ENEMY_SETTINGS = {
-    height: 1.8,
-    width: 0.5,
-    depth: 0.5,
-    fireRate: 2000, // milliseconds between shots
-    projectileSpeed: 15.0,
-    projectileSize: 0.1,
-    activationRadius: 40, // Enemies become active if player is within this radius
-    losMaxDistance: 50,   // Max distance for line of sight check
-};
-
-const projectiles = []; // Array to store active projectiles
-const enemyGeometry = new THREE.BoxGeometry(ENEMY_SETTINGS.width, ENEMY_SETTINGS.height, ENEMY_SETTINGS.depth);
-const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red for enemies
-const projectileGeometry = new THREE.SphereGeometry(ENEMY_SETTINGS.projectileSize, 8, 8);
-const projectileMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, emissiveIntensity: 1 });
-
 
 // --- Standard Lamp Creation Function ---
 function createStandardLamp(x, y, z, floorIndex, lampIdSuffix, sceneRef, lightsArrayRef, globalLightBulbMaterialRef) {
@@ -366,131 +343,6 @@ function createStandardLamp(x, y, z, floorIndex, lampIdSuffix, sceneRef, lightsA
     return lightGroup;
 }
 
-// --- Enemy Creation ---
-function createEnemy(x, y, z, floorIndex) {
-    const enemyMesh = new THREE.Mesh(enemyGeometry, enemyMaterial);
-    enemyMesh.position.set(x, y + ENEMY_SETTINGS.height / 2, z); // y is base, position at center
-    enemyMesh.castShadow = true;
-    enemyMesh.userData = {
-        type: 'enemy',
-        floorIndex: floorIndex,
-        lastShotTime: 0,
-        health: 100, // Basic health
-        gun: null, // To store the gun mesh
-        gunLength: 0 // To store gun length for tip calculation
-    };
-
-    // Create a gun for the enemy
-    const gunLength = 0.7; // Length of the gun barrel
-    const gunRadius = 0.05; // Radius of the gun barrel
-    const gunGeometry = new THREE.CylinderGeometry(gunRadius, gunRadius, gunLength, 8);
-    const gunMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 }); // Dark grey for the gun
-    const gunMesh = new THREE.Mesh(gunGeometry, gunMaterial);
-
-    // Orient the gun: Cylinder's length is along its local Y by default.
-    // Rotate it to align with the enemy's forward direction (local -Z).
-    gunMesh.rotation.x = Math.PI / 2;
-
-    // Position the gun relative to the enemy.
-    // The gun's origin is at its center. We position it so the tip protrudes.
-    // Move it to the enemy's local +X (right side).
-    const gunXOffset = -((ENEMY_SETTINGS.width / 2) + gunRadius + 0.1); // Position further to the left (enemy's right)
-    const gunYOffset = ENEMY_SETTINGS.height * 0.2; // Position slightly higher than center
-    const gunZOffset = -(ENEMY_SETTINGS.depth / 2 + gunLength / 2 - 0.1); // Protrude forward, slightly more embed for stability
-    gunMesh.position.set(gunXOffset, gunYOffset, gunZOffset);
-
-    enemyMesh.add(gunMesh); // Add gun as a child of the enemy
-    enemyMesh.userData.gun = gunMesh;
-    enemyMesh.userData.gunLength = gunLength;
-
-    // Diagnostic log:
-    // console.log(`Enemy ID: ${enemyMesh.id}, Gun ID: ${gunMesh.id}, Gun Parent ID: ${gunMesh.parent ? gunMesh.parent.id : 'null'}, Gun Visible: ${gunMesh.visible}`);
-
-    scene.add(enemyMesh);
-    enemies.push(enemyMesh);
-    worldObjects.push(enemyMesh); // For collision with player movement and projectiles
-    return enemyMesh;
-}
-
-// --- Projectile Creation ---
-function createProjectile(startPosition, direction, firedByPlayer = false, firer = null) {
-    const projectile = new THREE.Mesh(projectileGeometry, projectileMaterial);
-    projectile.position.copy(startPosition);
-    projectile.userData = {
-        type: 'projectile',
-        velocity: direction.clone().multiplyScalar(ENEMY_SETTINGS.projectileSpeed),
-        spawnTime: clock.getElapsedTime(),
-        firedByPlayer: firedByPlayer, // Mark who fired the projectile
-        firer: firer // Store the entity that fired the projectile
-    };
-    // console.log(`Projectile created by ${firer ? firer.name + ' (ID: ' + firer.id + ')' : (firedByPlayer ? 'Player' : 'Unknown')}. Projectile ID: ${projectile.id}`);
-    scene.add(projectile);
-    projectiles.push(projectile);
-    worldObjects.push(projectile); // Add to worldObjects for collision detection
-}
-
-// --- Initialization ---
-/* function init() {
-    clock = new THREE.Clock(); // Initialize clock here
-    scene = new THREE.Scene();
-    // Set background to a dark blue for a moonlit night
-    scene.background = new THREE.Color(0x010309); // Dark blue
-    scene.fog = new THREE.Fog(0x010309, 10, 100); // Fog to match the night theme
-
-    // Camera
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    // Camera position will be set after elevators are created in generateWorld
-
-    // Renderer
-    renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('gameCanvas'), antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.shadowMap.enabled = true;
-
-    // Lighting (moved from original spot to be before generateWorld if it depends on scene)
-    const ambientLight = new THREE.AmbientLight(0x015599, 0.1); // Dim bluish ambient light
-    scene.add(ambientLight);
-
-    const moonlight = new THREE.DirectionalLight(0x015599, 0.3); // Soft bluish moonlight
-    moonlight.position.set(-10, 20, -10); // Position the moonlight
-    moonlight.castShadow = true;
-    scene.add(moonlight);
-
-    // --- Procedural Generation ---
-    generateWorld(); // Now clock is initialized, enemies can use it
-
-    // Pointer Lock Controls (after camera is positioned by generateWorld/elevators)
-    controls = new PointerLockControls(camera, document.body);
-    scene.add(controls.getObject()); // Add the camera holder to the scene
-
-    const instructions = document.getElementById('instructions');
-    instructions.innerHTML = `
-        <p>Move: W/A/S/D</p>
-        <p>Jump: Space</p>
-        <p>Sprint: Shift</p>
-        <p>Crouch: Ctrl</p>
-        <p>Prone: Ctrl, Ctrl</p>
-        <p>Interact: E</p>
-        <p>Shoot: Left Mouse Button</p>
-    `;
-
-    controls.addEventListener('lock', () => instructions.style.display = 'none');
-    controls.addEventListener('unlock', () => instructions.style.display = 'block');
-    document.body.addEventListener('click', () => controls.lock());
-
-    // --- Event Listeners ---
-    document.addEventListener('mousedown', shoot);
-    document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('keyup', onKeyUp);
-    window.addEventListener('resize', onWindowResize);
-
-    // Make the player jump slightly at the start
-    playerVelocity.y = 2.0;
-
-    // Start the animation loop
-    animate();
-} */
-
 // --- World Generation ---
 function generateWorld() {
     const totalCorridorLength = SETTINGS.doorsPerSide * SETTINGS.corridorSegmentLength;
@@ -499,10 +351,6 @@ function generateWorld() {
     const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xbbbbbb }); // Slightly different for testing
     const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc });
     // Make blackDoorMaterial accessible globally or pass it around if needed for interact()
-    const textMaterial = new THREE.MeshStandardMaterial({ color: 0xcc9911, metalness: 0.8, roughness: 0.5 });
-    
-    
-
     const blackDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.3 });
     const redDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x121111, roughness: 0.3, emissive: 0x010000, emissiveIntensity: 0.01 }); // Added emissive property
     const elevatorMaterial = new THREE.MeshStandardMaterial({ color: 0xaa1111,   metalness: 0.8, roughness: 0.5  });
@@ -557,12 +405,7 @@ function generateWorld() {
     // Walls & Doors
     const wallDepth = 0.1;
     const doorOffset = (SETTINGS.corridorSegmentLength - SETTINGS.doorWidth) / 2;
-
-    const fontLoader = new FontLoader();
-    fontLoader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function (loadedFont) {
-
     const escalatorLength = SETTINGS.escalatorLength; // Use the defined escalator length
-
 
     // --- Elevator Configuration (for the single elevator in this setup) ---
     currentElevatorConfig = {
@@ -889,33 +732,6 @@ function generateWorld() {
     scene.add(roofB);
     worldObjects.push(roofB);
 
-    //  roof over Left escalator
-    const roofEscLGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, 4);
-    const roofEscL = new THREE.Mesh(roofEscLGeo, floorMaterial);
-    roofEscL.name = `Left Escalator Roof`;
-    roofEscL.position.set(
-        SETTINGS.corridorWidth +(SETTINGS.roomSize/ 2),
-        (SETTINGS.numFloors) * SETTINGS.floorHeight - floorDepth / 2, // So the top is at the roof level        
-        - 4 -2// Centered 
-    );
-    roofEscL.receiveShadow = true;
-    scene.add(roofEscL);
-    worldObjects.push(roofEscL);
-
-    //  roof over Right escalator
-    const roofEscRGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, 4);
-    const roofEscR = new THREE.Mesh(roofEscRGeo, floorMaterial);
-    roofEscR.name = `Right Escalator Roof`;
-    roofEscR.position.set(
-        - (SETTINGS.roomSize / 2),   
-        (SETTINGS.numFloors) * SETTINGS.floorHeight - floorDepth / 2, // So the top is at the roof level
-        - 4 -2// Centered
-    );
-    roofEscR.receiveShadow = true;
-    scene.add(roofEscR);
-    worldObjects.push(roofEscR);
-
-
     // --- Walls for Elevator Penthouse on the Roof ---
     // These walls surround the top part of the elevator shaft that protrudes above the main roof.
     // The individual elevatorObj.shaftCeiling(s) are the roofs *inside* this penthouse.
@@ -926,11 +742,11 @@ function generateWorld() {
     const penthouseWallCenterY = mainRoofSurfaceY + penthouseWallHeight / 2;
 
     // Penthouse Wall Left (Player's Right when facing +Z)
-    const penthouseWallLeftGeo = new THREE.BoxGeometry(2*wallDepth, penthouseWallHeight + floorDepth, overallShaftActualDepth);
+    const penthouseWallLeftGeo = new THREE.BoxGeometry(wallDepth, penthouseWallHeight, overallShaftActualDepth);
     const penthouseWallLeft = new THREE.Mesh(penthouseWallLeftGeo, wallMaterial);
     penthouseWallLeft.name = `ElevatorPenthouseWall_Left`;
     penthouseWallLeft.position.set(
-        /* overallShaftMinX */ - wallDepth, // Adjusted
+        overallShaftMinX - wallDepth / 2, // Adjusted
         penthouseWallCenterY,
         overallShaftActualCenterZ
     );
@@ -938,11 +754,11 @@ function generateWorld() {
     scene.add(penthouseWallLeft); worldObjects.push(penthouseWallLeft);
 
     // Penthouse Wall Right (Player's Left when facing +Z)
-    const penthouseWallRightGeo = new THREE.BoxGeometry(wallDepth*2, penthouseWallHeight + floorDepth, overallShaftActualDepth);
+    const penthouseWallRightGeo = new THREE.BoxGeometry(wallDepth, penthouseWallHeight, overallShaftActualDepth);
     const penthouseWallRight = new THREE.Mesh(penthouseWallRightGeo, wallMaterial);
     penthouseWallRight.name = `ElevatorPenthouseWall_Right`;
     penthouseWallRight.position.set(
-        /* overallShaftMaxX */ SETTINGS.elevatorSize + wallDepth, // Adjusted
+        overallShaftMaxX + wallDepth / 2, // Adjusted
         penthouseWallCenterY,
         overallShaftActualCenterZ
     );
@@ -1020,58 +836,6 @@ function generateWorld() {
     scene.add(rooftopSpotLight);
     scene.add(rooftopSpotLight.target); // Important: add the target to the scene as well
 
-    // RoofTop B-Wing Spot Light
-    // --- Floodlight on Elevator Shaft Roof ---
-    //const floodlightHousingMaterial = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.7, roughness: 0.4 });
-    //const floodlightLensMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFEE, emissive: 0xFFFFDD, emissiveIntensity: 0.5 }); // Slightly glowing lens
-
-    const floodlightHousingGeoB = new THREE.BoxGeometry(0.8, 0.4, 0.4); // width, height, depth
-    const floodlightHousingB = new THREE.Mesh(floodlightHousingGeoB, floodlightHousingMaterial);
-
-    const floodlightLensGeoB = new THREE.CylinderGeometry(0.15, 0.18, 0.1, 16); // radiusTop, radiusBottom, height, segments
-    const floodlightLensB = new THREE.Mesh(floodlightLensGeoB, floodlightLensMaterial);
-    floodlightLensB.rotation.x = Math.PI / 2;
-    floodlightLensB.position.z = -0.2; // Position at the front of the housing
-
-    const floodlightAssemblyB = new THREE.Group();
-    floodlightAssemblyB.add(floodlightHousingB);
-    floodlightAssemblyB.add(floodlightLensB);
-
-    floodlightAssemblyB.name = "FloodlightAssembly_B";
-
-    // Position the floodlight assembly on top of the 'Top Roof over Elevator'
-    // Use the middle elevator's shaft ceiling for floodlight positioning
-    //const middleElevatorShaftCeiling = elevators.find(e => e.id === "mainElevator").shaftCeiling;
-    //const shaftCeilingSurfaceY = middleElevatorShaftCeiling.position.y + floorDepth / 2;
-    floodlightAssemblyB.position.set(
-        middleElevatorShaftCeiling.position.x, // Centered on X of middle elevator's ceiling
-        shaftCeilingSurfaceY + 0.2, // Housing height/2 = 0.4/2 = 0.2
-        middleElevatorShaftCeiling.position.z - (overallShaftActualDepth / 2) + 0.3 // Near the edge facing the main roof
-    );
-    scene.add(floodlightAssemblyB);
-
-    const rooftopSpotLightB = new THREE.SpotLight(0xffffff, 20, 200, Math.PI / 3, 1, 1.5); // color, intensity, distance, angle, penumbra, decay
-    rooftopSpotLightB.position.copy(floodlightAssemblyB.position);
-    rooftopSpotLightB.position.z -= 0.2; // Emitter slightly in front of housing
-    // Target the center of the main roof area
-    // const totalCorridorLength = SETTINGS.doorsPerSide * SETTINGS.corridorSegmentLength; // Already defined
-    //const mainRoofCenterY = (SETTINGS.numFloors) * SETTINGS.floorHeight;
-    const mainRoofCenterZB = -8-4 - ((totalCorridorLength + SETTINGS.escalatorLength) / 2);
-    rooftopSpotLightB.target.position.set(SETTINGS.corridorWidth / 2, mainRoofCenterY, mainRoofCenterZB);
-
-    rooftopSpotLightB.castShadow = true;
-    rooftopSpotLightB.shadow.mapSize.width = 1024;
-    rooftopSpotLightB.shadow.mapSize.height = 1024;
-    rooftopSpotLightB.shadow.camera.near = 1;
-    rooftopSpotLightB.shadow.camera.far = 200;
-    rooftopSpotLightB.shadow.focus = 1; // Softer shadows
-
-    scene.add(rooftopSpotLightB);
-    scene.add(rooftopSpotLightB.target); // Important: add the target to the scene as well
-
-    //End RoofTop B-Wing Spot Light
-
-
     // --- Rooftop Perimeter Walls ---
     const rooftopWallHeight = 1.0; // Low walls
     const rooftopWallThickness = 0.5; // Wide walls
@@ -1082,7 +846,6 @@ function generateWorld() {
     const roofActualDepth = totalCorridorLength + SETTINGS.escalatorLength + 12;
     const roofActualCenterX = overallShaftActualCenterX; // Center roof with the shaft/building
     const roofActualCenterZ = 2 + ((totalCorridorLength + SETTINGS.escalatorLength) / 2); // Z center remains the same
-    const roofActualCenterZB = -16 - (2 + ((totalCorridorLength + SETTINGS.escalatorLength) / 2)); // Z center remains the same
     const roofTopSurfaceY = (SETTINGS.numFloors) * SETTINGS.floorHeight; // Top Y of the main roof slab
     
     const wallYPos = roofTopSurfaceY + rooftopWallHeight / 2; // Position walls to sit ON the roof surface
@@ -1095,63 +858,43 @@ function generateWorld() {
     wallFarZ.castShadow = true; wallFarZ.receiveShadow = true; wallFarZ.geometry.computeBoundingBox();
     scene.add(wallFarZ); worldObjects.push(wallFarZ);
 
-    // Wall 1B: Far Z (Nagative Z end of the roof)
-    const wallFarZBGeo = new THREE.BoxGeometry(roofActualWidth, rooftopWallHeight, rooftopWallThickness);
-    const wallFarZB = new THREE.Mesh(wallFarZBGeo, rooftopWallMaterial);
-    wallFarZB.position.set(roofActualCenterX, wallYPos, roofActualCenterZB - roofActualDepth / 2 + rooftopWallThickness / 2);
-    wallFarZB.name = "RooftopWall_B_FarZ";
-    wallFarZB.castShadow = true; wallFarZB.receiveShadow = true; wallFarZB.geometry.computeBoundingBox();
-    scene.add(wallFarZB); worldObjects.push(wallFarZB);
-
     // Wall 2: Near Z (Negative Z end of the roof), with opening for elevator
     // Elevator opening X: from 0 to SETTINGS.corridorWidth. Roof X spans from -SETTINGS.roomSize to SETTINGS.corridorWidth + SETTINGS.roomSize
-    // const nearWallZPos = roofActualCenterZ - roofActualDepth / 2 + rooftopWallThickness / 2;
+    const nearWallZPos = roofActualCenterZ - roofActualDepth / 2 + rooftopWallThickness / 2;
 
-   
+    // Part 1 of Near Z wall (left of elevator: from -SETTINGS.roomSize to 0)
+    /* const nearWallLeftLength = SETTINGS.roomSize;
+    const nearWallLeftGeo = new THREE.BoxGeometry(nearWallLeftLength, rooftopWallHeight, rooftopWallThickness);
+    const nearWallLeft = new THREE.Mesh(nearWallLeftGeo, rooftopWallMaterial);
+    nearWallLeft.position.set(-SETTINGS.roomSize / 2, wallYPos, nearWallZPos);
+    nearWallLeft.name = "RooftopWall_NearZ_Left";
+    nearWallLeft.castShadow = true; nearWallLeft.receiveShadow = true; nearWallLeft.geometry.computeBoundingBox();
+    scene.add(nearWallLeft); worldObjects.push(nearWallLeft);
+
+    // Part 2 of Near Z wall (right of elevator: from SETTINGS.corridorWidth to SETTINGS.corridorWidth + SETTINGS.roomSize)
+    const nearWallRightLength = SETTINGS.roomSize;
+    const nearWallRightGeo = new THREE.BoxGeometry(nearWallRightLength, rooftopWallHeight, rooftopWallThickness);
+    const nearWallRight = new THREE.Mesh(nearWallRightGeo, rooftopWallMaterial);
+    nearWallRight.position.set(SETTINGS.corridorWidth + SETTINGS.roomSize / 2, wallYPos, nearWallZPos);
+    nearWallRight.name = "RooftopWall_NearZ_Right";
+    nearWallRight.castShadow = true; nearWallRight.receiveShadow = true; nearWallRight.geometry.computeBoundingBox();
+    scene.add(nearWallRight); worldObjects.push(nearWallRight); */
 
     // Wall 3: Side X (Negative X side of roof, at X = -SETTINGS.roomSize)
-    const wallSideLeftGeo = new THREE.BoxGeometry(rooftopWallThickness, rooftopWallHeight, roofActualDepth + 2);
+    const wallSideLeftGeo = new THREE.BoxGeometry(rooftopWallThickness, rooftopWallHeight, roofActualDepth);
     const wallSideLeft = new THREE.Mesh(wallSideLeftGeo, rooftopWallMaterial);
-    wallSideLeft.position.set(roofActualCenterX - roofActualWidth / 2 + rooftopWallThickness / 2, wallYPos, roofActualCenterZ - 1);
+    wallSideLeft.position.set(roofActualCenterX - roofActualWidth / 2 + rooftopWallThickness / 2, wallYPos, roofActualCenterZ);
     wallSideLeft.name = "RooftopWall_SideLeft";
     wallSideLeft.castShadow = true; wallSideLeft.receiveShadow = true; wallSideLeft.geometry.computeBoundingBox();
     scene.add(wallSideLeft); worldObjects.push(wallSideLeft);
 
-    // Wall 3B : Side X (Negative X side of roof, at X = -SETTINGS.roomSize)
-    const wallSideLeftBGeo = new THREE.BoxGeometry(rooftopWallThickness, rooftopWallHeight, roofActualDepth + 6);
-    const wallSideLeftB = new THREE.Mesh(wallSideLeftBGeo, rooftopWallMaterial);
-    wallSideLeftB.position.set(roofActualCenterX - roofActualWidth / 2 + rooftopWallThickness / 2, wallYPos, -16-roofActualCenterZ + 3);
-    wallSideLeftB.name = "RooftopWall_B_SideLeft";
-    wallSideLeftB.castShadow = true; wallSideLeftB.receiveShadow = true; wallSideLeftB.geometry.computeBoundingBox();
-    scene.add(wallSideLeftB); worldObjects.push(wallSideLeftB);
-
-
     // Wall 4: Side X (Positive X side of roof, at X = SETTINGS.corridorWidth + SETTINGS.roomSize)
-    const wallSideRightGeo = new THREE.BoxGeometry(rooftopWallThickness, rooftopWallHeight, roofActualDepth + 2);
+    const wallSideRightGeo = new THREE.BoxGeometry(rooftopWallThickness, rooftopWallHeight, roofActualDepth);
     const wallSideRight = new THREE.Mesh(wallSideRightGeo, rooftopWallMaterial);
-    wallSideRight.position.set(roofActualCenterX + roofActualWidth / 2 - rooftopWallThickness / 2, wallYPos, roofActualCenterZ - 1);
+    wallSideRight.position.set(roofActualCenterX + roofActualWidth / 2 - rooftopWallThickness / 2, wallYPos, roofActualCenterZ);
     wallSideRight.name = "RooftopWall_SideRight";
     wallSideRight.castShadow = true; wallSideRight.receiveShadow = true; wallSideRight.geometry.computeBoundingBox();
     scene.add(wallSideRight); worldObjects.push(wallSideRight);
-
-    // Wall 4B : Side X (Negative X side of roof, at X = -SETTINGS.roomSize)
-    const wallSideRightBGeo = new THREE.BoxGeometry(rooftopWallThickness, rooftopWallHeight, roofActualDepth + 6);
-    const wallSideRightB = new THREE.Mesh(wallSideRightBGeo, rooftopWallMaterial);
-    wallSideRightB.position.set(roofActualCenterX + roofActualWidth / 2 - rooftopWallThickness / 2, wallYPos, -16-roofActualCenterZ + 3);
-    wallSideRightB.name = "RooftopWall_B_SideRight";
-    wallSideRightB.castShadow = true; wallSideRightB.receiveShadow = true; wallSideRightB.geometry.computeBoundingBox();
-    scene.add(wallSideRightB); worldObjects.push(wallSideRightB);
-
-    
-/*     // Wall 5 : Side X (Negative X side of roof, at X = -SETTINGS.roomSize)
-    const wallSideLeftBGeo = new THREE.BoxGeometry(rooftopWallThickness, rooftopWallHeight, roofActualDepth);
-    const wallSideLeftB = new THREE.Mesh(wallSideLeftBGeo, rooftopWallMaterial);
-    wallSideLeftB.position.set(roofActualCenterX - roofActualWidth / 2 + rooftopWallThickness / 2, wallYPos, -16-roofActualCenterZ);
-    wallSideLeftB.name = "RooftopWall_B_SideLeft";
-    wallSideLeftB.castShadow = true; wallSideLeftB.receiveShadow = true; wallSideLeftB.geometry.computeBoundingBox();
-    scene.add(wallSideLeftB); worldObjects.push(wallSideLeftB);
-
- */
 
 
     // --- Define Building Footprint for Basement ---
@@ -1615,7 +1358,7 @@ function generateWorld() {
                     safeR.castShadow = true; safeR.receiveShadow = true; safeR.name = `Safe_R_F${i}_D${j}`;
                     safeR.userData = defaultSafeUserData(); // scene.add(safeR); worldObjects.push(safeR);
                     rightRoomContents.add(safeR); worldObjects.push(safeR);
-                    const dialRGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
+                    const dialRGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
                     const dialR = new THREE.Mesh(dialRGeo, dialMaterial);
                     dialR.position.set(safeDepth / 2, 0, 0); dialR.rotation.z = -Math.PI / 2;
                     dialR.userData.isSafeDial = true; dialR.name = `Dial_Safe_R_F${i}_D${j}`; safeR.add(dialR);
@@ -1693,7 +1436,7 @@ function generateWorld() {
                     safeBR.castShadow = true; safeBR.receiveShadow = true; safeBR.name = `Safe_B_R_F${i}_D${j}`;
                     safeBR.userData = defaultSafeUserData(); // scene.add(safeR); worldObjects.push(safeR);
                     rightRoomContents.add(safeBR); worldObjects.push(safeBR);
-                    const dialRBGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
+                    const dialRBGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
                     const dialRB = new THREE.Mesh(dialRBGeo, dialMaterial);
                     dialRB.position.set(safeDepth / 2, 0, 0); dialRB.rotation.z = -Math.PI / 2;
                     dialRB.userData.isSafeDial = true; dialRB.name = `Dial_Safe_B_R_F${i}_D${j}`; safeBR.add(dialRB);
@@ -1766,7 +1509,7 @@ function generateWorld() {
                     safeL.castShadow = true; safeL.receiveShadow = true; safeL.name = `Safe_L_F${i}_D${j}`;
                     safeL.userData = defaultSafeUserData(); // scene.add(safeL); worldObjects.push(safeL);
                     leftRoomContents.add(safeL); worldObjects.push(safeL);
-                    const dialLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
+                    const dialLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
                     const dialL = new THREE.Mesh(dialLGeo, dialMaterial);
                     dialL.position.set(-safeDepth / 2, 0, 0); dialL.rotation.z = Math.PI / 2;
                     dialL.userData.isSafeDial = true; dialL.name = `Dial_Safe_L_F${i}_D${j}`; safeL.add(dialL);
@@ -1836,7 +1579,7 @@ function generateWorld() {
                                     safeBL.castShadow = true; safeBL.receiveShadow = true; safeBL.name = `Safe_L_F${i}_D${j}`;
                                     safeBL.userData = defaultSafeUserData(); // scene.add(safeL); worldObjects.push(safeL);
                                     leftRoomContents.add(safeBL); worldObjects.push(safeBL);
-                                    const dialBLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
+                                    const dialBLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
                                     const dialBL = new THREE.Mesh(dialBLGeo, dialMaterial);
                                     dialBL.position.set(-safeDepth / 2, 0, 0); dialBL.rotation.z = Math.PI / 2;
                                     dialBL.userData.isSafeDial = true; dialBL.name = `Dial_Safe_B_L_F${i}_D${j}`; safeBL.add(dialBL);
@@ -2099,53 +1842,14 @@ function generateWorld() {
             scene.add(endWallFar);
             worldObjects.push(endWallFar);
 
-// Add Text "A" + floor number to endWallAFar
-            const textStringA = "A" + (i === 0 ? "G" : i.toString());
-            const textGeoA = new TextGeometry(textStringA, {
-                font: loadedFont,
-                size: 1.5, // Large letter size
-                depth: 0.15, // Corrected: Use 'depth' for extrusion
-                curveSegments: 12,
-                bevelEnabled: false
-            });
-            textGeoA.center(); // Center the geometry vertices
-            const textMeshA = new THREE.Mesh(textGeoA, textMaterial);
-
-            textMeshA.position.set(
-                endWallFar.position.x, // Now centered because geometry is centered
-                endWallFar.position.y, // Now centered because geometry is centered
-                endWallFar.position.z - (wallDepth / 2) - 0.02 // Slightly in front of the wall's inner surface
-            );
-            textMeshA.rotation.y = Math.PI; // Rotate to face the player
-            textMeshA.name = `Text_Wall_A_F${i}`;
-            scene.add(textMeshA);
-
              // Far end wall for office B floors (at end of escalator area)
             const endWallBEscGeo = new THREE.BoxGeometry(SETTINGS.corridorWidth + (2 * escalatorWidth), SETTINGS.floorHeight, wallDepth);
             const endWallBFar = new THREE.Mesh(endWallBEscGeo, wallMaterial);
             endWallBFar.position.set(SETTINGS.corridorWidth / 2, floorY + SETTINGS.wallHeight / 2, - 16 -(totalCorridorLength + 4 + escalatorLength + 4));
-            endWallBFar.name = `Escalator B Back Wall B ${i}`;
+            endWallBFar.name = `Escalator Back Wall B ${i}`;
             endWallBFar.castShadow = true; endWallBFar.receiveShadow = true;
             scene.add(endWallBFar);
             worldObjects.push(endWallBFar);
-
-            // Add Text "B" + floor number to endWallBFar
-            const textStringB = "B" + (i === 0 ? "G" : i.toString());
-            const textGeoB = new TextGeometry(textStringB, {
-                font: loadedFont,
-                size: 1.5,
-                depth: 0.15, // Corrected: Use 'depth' for extrusion
-                curveSegments: 12,
-                bevelEnabled: false });
-            textGeoB.center(); // Center the geometry vertices
-            const textMeshB = new THREE.Mesh(textGeoB, textMaterial);
-            textMeshB.position.set(
-                endWallBFar.position.x, // Now centered because geometry is centered
-                endWallBFar.position.y, // Now centered because geometry is centered
-                endWallBFar.position.z + (wallDepth / 2) + 0.02 // Slightly in front of the wall's inner surface
-            );
-            textMeshB.name = `Text_Wall_B_F${i}`;
-            scene.add(textMeshB);
 
             // --- Walls around Escalator Area for Office Floors ---
             // Right Wall next to escalator (Positive Z direction)
@@ -2278,14 +1982,14 @@ function generateWorld() {
             });
 
             // Escalator Floor bridge
-            const bridge2EscGeo = new THREE.BoxGeometry(SETTINGS.corridorWidth + 0.19, floorDepth, escalatorLength + 3);
+            const bridge2EscGeo = new THREE.BoxGeometry(SETTINGS.corridorWidth, floorDepth, escalatorLength + 3);
             const bridge2Esc = new THREE.Mesh(bridge2EscGeo, floorMaterial); // Use standard floorMaterial
             bridge2Esc.name = `Escalator Floor Bridge ${i}`;
             bridge2Esc.position.set(SETTINGS.corridorWidth / 2, floorY - floorDepth / 2, totalCorridorLength + 4 +(escalatorLength / 2) + 0.5);
             bridge2Esc.receiveShadow = true; scene.add(bridge2Esc); worldObjects.push(bridge2Esc);
 
             // Escalator Floor B bridge
-            const bridgeB2EscGeo = new THREE.BoxGeometry(SETTINGS.corridorWidth + 0.19, floorDepth, escalatorLength + 3);
+            const bridgeB2EscGeo = new THREE.BoxGeometry(SETTINGS.corridorWidth, floorDepth, escalatorLength + 3);
             const bridgeB2Esc = new THREE.Mesh(bridgeB2EscGeo, floorMaterial); // Use standard floorMaterial
             bridgeB2Esc.name = `Escalator Floor B Bridge ${i}`;
             bridgeB2Esc.position.set(SETTINGS.corridorWidth / 2, floorY - floorDepth / 2, -16 - (totalCorridorLength + 4 +(escalatorLength / 2) + 0.5));
@@ -2348,11 +2052,10 @@ function generateWorld() {
             // Skip escalator generation if this is the absolute lowest basement floor (can't go further down)
             if (i > 0 && i < SETTINGS.numFloors) { // Create escalators connecting floor i (e.g. 1) down to floor i-1 (e.g. 0)
 
-            // A-Wing Escalators /////// AAAAAAAAAA
-                // ---  A-Wing Left  side Escalator A down Starting Point (RED) ---
+            // --- Left  side Escalator down Starting Point (RED) ---
             const startEscDownGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1); // <-- Add this line
             const startEscDown = new THREE.Mesh(startEscDownGeo, EscalatorEmbarkMaterial);
-            startEscDown.name = `Left Escalator Down Start A ${i}`;
+            startEscDown.name = `Left Escalator Down Start ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             startEscDown.position.set(
                 SETTINGS.corridorWidth + (escalatorWidth / 2) + 0.1,
@@ -2368,7 +2071,7 @@ function generateWorld() {
             // Track stepDown for this floor
             escalatorSteps.down[i] = [];
 
-            // ---  A-Wing Steps DOWN (LEFT side) ---
+            // --- Steps DOWN (LEFT side) ---
             for (let s = 0; s < stepCount; s++) {
                 const y = floorY -.01 - (s + 1) * stepHeight + stepHeight / 2;
                 const z = totalCorridorLength + 4.3 + (s / stepCount) * SETTINGS.escalatorLength;
@@ -2381,21 +2084,21 @@ function generateWorld() {
                 );
                 stepDown.castShadow = true;
                 stepDown.receiveShadow = true;
-                stepDown.name = `Left Escalator Step Down A ${i}-${s}`;
+                stepDown.name = `Left Escalator Step Down ${i}-${s}`;
                 scene.add(stepDown);
                 worldObjects.push(stepDown); // Track stepDown
                 escalatorSteps.down[i].push(stepDown); // Track stepDown
             }
 
-            //  A-Wing Escalator Down on lower floor Ending Point (Left side    )    
+            // Escalator Down on lower floor Ending Point (Left side    )    
             const endEscDownGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             
             const endEscDown = new THREE.Mesh(endEscDownGeo, EscalatorMaterial);
-            endEscDown.name = `Left Escalator Down End A ${i}`;
+            endEscDown.name = `Left Escalator Down End ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             endEscDown.position.set(
                 SETTINGS.corridorWidth + (escalatorWidth / 2) + 0.1,
-                floorY - SETTINGS.floorHeight -(floorDepth/2) + 0.01, // Lowered by 0.01 to match last step
+                floorY - SETTINGS.floorHeight -(floorDepth/2), // So the top is at previous floorY
                 totalCorridorLength + escalatorLength + 4 + 0.5
             );
             endEscDown.receiveShadow = true;
@@ -2403,12 +2106,12 @@ function generateWorld() {
             worldObjects.push(endEscDown);
             // NEW: Store the end mesh for later reset
             escalatorEnds.down[i] = endEscDown;
-            // ---  A-Wing End of Left side Escalator Down on lower floor Ending Point --- ///
+            // --- End of Left side Escalator Down on lower floor Ending Point --- ///
 
-            // ---  A-Wing  Right side Escalator going Up on Lower floor Starting Point (RED) ---
+            // --- Right side Escalator going Up on Lower floor Starting Point (RED) ---
             const startEscUpGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             const startEscUp = new THREE.Mesh(startEscUpGeo, EscalatorEmbarkMaterial);
-            startEscUp.name = `Right Escalator Up Start A ${i}`;
+            startEscUp.name = `Right Escalator Up Start ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             startEscUp.position.set(
                 -0.1 - (escalatorWidth / 2),
@@ -2424,7 +2127,7 @@ function generateWorld() {
             // Track stepUp for this floor
             escalatorSteps.up[i] = [];
 
-            // --- Steps UP A-Wing (RIGHT side) ---
+            // --- Steps UP (RIGHT side) ---
             for (let s = 0; s < stepCount; s++) {
                 //const y = floorY - (stepCount - s) * stepHeight + stepHeight / 2;
                 const y = floorY + 0.01 - (s + 1) * stepHeight + stepHeight / 2;
@@ -2438,16 +2141,16 @@ function generateWorld() {
                 );
                 stepUp.castShadow = true;
                 stepUp.receiveShadow = true;
-                stepUp.name = `Right Escalator Step Up A ${i}-${s}`;
+                stepUp.name = `Right Escalator Step Up ${i}-${s}`;
                 scene.add(stepUp);
                 worldObjects.push(stepUp);
                 escalatorSteps.up[i].push(stepUp); // Track stepUp
             }
 
-            // Escalator A-Wing Up from lower floor Ending Point    
+            // Escalator Up from lower floor Ending Point    
             const endEscUpGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             const endEscUp = new THREE.Mesh(endEscUpGeo, EscalatorMaterial);
-            endEscUp.name = `Right Escalator Up End A ${i}`;
+            endEscUp.name = `Right Escalator Up End ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             endEscUp.position.set(
                 -0.1 - (escalatorWidth / 2),
@@ -2457,146 +2160,28 @@ function generateWorld() {
             endEscUp.receiveShadow = true;
             scene.add(endEscUp);
             worldObjects.push(endEscUp);
-            // NEW: Store a translated clone of the end mesh for up steps A
+            // NEW: Store a translated clone of the end mesh for up steps
             const translatedEndEscUp = endEscUp.clone();
             translatedEndEscUp.position.y += 0.2;
             translatedEndEscUp.position.z += 0.3;
             escalatorEnds.up[i] = translatedEndEscUp;
             // End of Right side escalator Ramp going up from lower floor////
-            // --- End of A-Wing Escalators ---   AAAAAAAA
-
-            // B-Wing Escalators /////// BBBBBBBBBBBBBB
-            // ---  B-Wing Left  side Escalator B down Starting Point (RED) ---
-            const startEscDownGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1); // <-- Add this line
-            const startEscDownB = new THREE.Mesh(startEscDownGeoB, EscalatorEmbarkMaterial);
-            startEscDownB.name = `Left Escalator Down Start B ${i}`;
-            //start1Esc.rotation.x = -Math.PI / 2;
-            startEscDownB.position.set(
-                - (escalatorWidth / 2) - 0.1,
-                floorY -(floorDepth/2), // So the top is at floorY
-                -16 - totalCorridorLength  - 3.5
-            );
-            startEscDownB.receiveShadow = true;
-            scene.add(startEscDownB);
-            worldObjects.push(startEscDownB);
-            
-            // Track startEscDown for this floor
-            escalatorStartsB.down[i] = startEscDownB;
-            // Track stepDown for this floor
-            escalatorStepsB.down[i] = [];
-
-            // ---  B-Wing Steps DOWN (LEFT side) --- 
-            for (let s = 0; s < stepCount; s++) {
-                const y = floorY -.01 - (s + 1) * stepHeight + stepHeight / 2;
-                const zB = -16 - totalCorridorLength - 4.3 - (s / stepCount) * SETTINGS.escalatorLength;
-                const stepGeoB = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
-                const stepDownB = new THREE.Mesh(stepGeoB, EscalatorMaterial);
-                stepDownB.position.set(
-                    - (stepWidth / 2) - 0.1,
-                    y,
-                    zB
-                );
-                stepDownB.castShadow = true;
-                stepDownB.receiveShadow = true;
-                stepDownB.name = `Left Escalator Step Down B ${i}-${s}`;
-                scene.add(stepDownB);
-                worldObjects.push(stepDownB); // Track stepDown
-                escalatorStepsB.down[i].push(stepDownB); // Track stepDown
-            }
-
-            //  B-Wing Escalator Down on lower floor Ending Point (Left side    )    
-            const endEscDownGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
-            
-            const endEscDownB = new THREE.Mesh(endEscDownGeoB, EscalatorMaterial);
-            endEscDownB.name = `Left Escalator Down End B ${i}`;
-            //start1Esc.rotation.x = -Math.PI / 2;
-            endEscDownB.position.set(
-                - (escalatorWidth / 2) - 0.1,
-                floorY - SETTINGS.floorHeight -(floorDepth/2) + 0.01, // Lowered by 0.01 to match last step
-                -16 - totalCorridorLength - escalatorLength - 4 - 0.5
-            );
-            endEscDownB.receiveShadow = true;
-            scene.add(endEscDownB);
-            worldObjects.push(endEscDownB);
-            // NEW: Store the end mesh for later reset
-            escalatorEndsB.down[i] = endEscDownB;
-            // ---  B-Wing End of Left side Escalator Down on lower floor Ending Point --- ///
-
-            // ---  B-Wing  Right side Escalator going Up on Lower floor Starting Point (RED) ---
-            const startEscUpGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
-            const startEscUpB = new THREE.Mesh(startEscUpGeoB, EscalatorEmbarkMaterial);
-            startEscUpB.name = `Right Escalator Up Start B ${i}`;
-            //start1Esc.rotation.x = -Math.PI / 2;
-            startEscUpB.position.set(
-                SETTINGS.corridorWidth + 0.1 + (escalatorWidth / 2),
-                floorY - SETTINGS.floorHeight -(floorDepth/2), // So the top is at floorY
-                -16 - totalCorridorLength - escalatorLength - 4 - 0.5
-            );
-            startEscUpB.receiveShadow = true;
-            scene.add(startEscUpB);
-            worldObjects.push(startEscUpB);
-        
-            // Track startEscUp for this floor
-            escalatorStartsB.up[i] = startEscUpB;
-            // Track stepUp for this floor
-            escalatorStepsB.up[i] = [];
-
-            // --- Steps UP B-Wing (RIGHT side) ---
-            for (let s = 0; s < stepCount; s++) {
-                //const y = floorY - (stepCount - s) * stepHeight + stepHeight / 2;
-                const y = floorY + 0.01 - (s + 1) * stepHeight + stepHeight / 2;
-                const zB = -16 - totalCorridorLength - 4.3 - (s / stepCount) * SETTINGS.escalatorLength;
-                const stepGeoB = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
-                const stepUpB = new THREE.Mesh(stepGeoB, EscalatorMaterial);
-                stepUpB.position.set(
-                    SETTINGS.corridorWidth + 0.1 + (stepWidth / 2),
-                    y,
-                    zB
-                );
-                stepUpB.castShadow = true;
-                stepUpB.receiveShadow = true;
-                stepUpB.name = `Right Escalator Step Up B ${i}-${s}`;
-                scene.add(stepUpB);
-                worldObjects.push(stepUpB);
-                escalatorStepsB.up[i].push(stepUpB); // Track stepUp
-            }
-
-            // Escalator B-Wing Up from lower floor Ending Point    
-            const endEscUpGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
-            const endEscUpB = new THREE.Mesh(endEscUpGeoB, EscalatorMaterial);
-            endEscUpB.name = `Right Escalator Up End B ${i}`;
-            //start1Esc.rotation.x = -Math.PI / 2;
-            endEscUpB.position.set(
-                SETTINGS.corridorWidth + 0.1 + (escalatorWidth / 2),
-                floorY -(floorDepth/3) -0.08 , // So the top is at floorY
-                -16 - totalCorridorLength  - 3.5
-            );
-            endEscUpB.receiveShadow = true;
-            scene.add(endEscUpB);
-            worldObjects.push(endEscUpB);
-            // NEW: Store a translated clone of THE END MESH FOR UP STEPS B
-            const translatedEndEscUpB = endEscUpB.clone();
-            translatedEndEscUpB.position.y += 0.2;
-            translatedEndEscUpB.position.z -= 0.3; // Corrected to make B-Wing UP behave like A-Wing UP (stop short)
-            escalatorEndsB.up[i] = translatedEndEscUpB;
-            // End of Right side escalator Ramp going up from lower floor////
-            // --- End of B-Wing Escalators ---   BBBBBBBBBBB
 
             // --- Add Balustrades --- ///////////////////////////////////////////////////
 
-            // Balustrades for Escalator Wing-A UP (Left side, X from -escalatorWidth to 0) /// AAAAAAAA
+            // Balustrades for Escalator UP (Left side, X from -escalatorWidth to 0)
             const startUpBalustrade = new THREE.Vector3(-SETTINGS.escalatorWidth / 2, lowerFloorTopY-floorDepth, totalCorridorLength + SETTINGS.escalatorLength + 4 );
             const endUpBalustrade = new THREE.Vector3(-SETTINGS.escalatorWidth / 2, currentFloorTopY-floorDepth/2, totalCorridorLength + 3.5);
             const dirUpBalustrade = new THREE.Vector3().subVectors(endUpBalustrade, startUpBalustrade);
             const lengthUpBalustrade = dirUpBalustrade.length();
             const centerPosUpBalustrade = new THREE.Vector3().addVectors(startUpBalustrade, endUpBalustrade).multiplyScalar(0.5);
 
-            // Calculate the Y position of the ramp surface at the center Z for UP escalator A
+            // Calculate the Y position of the ramp surface at the center Z for UP escalator
             const centerZ_UpBalustrade = centerPosUpBalustrade.z;
             const rampSurfaceY_at_centerZ_Up = startUpBalustrade.y + (centerZ_UpBalustrade - startUpBalustrade.z) / (endUpBalustrade.z - startUpBalustrade.z) * (endUpBalustrade.y - startUpBalustrade.y);
             const balustradeCenterY_Up = rampSurfaceY_at_centerZ_Up + balustradeHeight / 2;
 
-            // Inner balustrade A (closer to corridor, X=0)
+            // Inner balustrade (closer to corridor, X=0)
             const innerBalustradeUpGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, lengthUpBalustrade);
             const innerBalustradeUp = new THREE.Mesh(innerBalustradeUpGeo, balustradeMaterial);
             innerBalustradeUp.name = `Balustrade_Up_Inner_F${i-1}-F${i}`;
@@ -2605,7 +2190,7 @@ function generateWorld() {
             scene.add(innerBalustradeUp);
             worldObjects.push(innerBalustradeUp);
 
-            // Outer balustrade A (X=-escalatorWidth)
+            // Outer balustrade (X=-escalatorWidth)
             const outerBalustradeUpGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, lengthUpBalustrade);
             const outerBalustradeUp = new THREE.Mesh(outerBalustradeUpGeo, balustradeMaterial);
             outerBalustradeUp.name = `Balustrade_Up_Outer_F${i-1}-F${i}`;
@@ -2614,7 +2199,7 @@ function generateWorld() {
             scene.add(outerBalustradeUp);
             worldObjects.push(outerBalustradeUp);
 
-            // Add cylinders for escalator UP balustrades A (posts at end sides)
+            // Add cylinders for escalator UP balustrades (posts at end sides)
             {
                 // Create a cylinder with diameter = balustradeHeight and height = balustradeThickness.
                 const cylinderGeo = new THREE.CylinderGeometry(balustradeHeight/2, balustradeHeight/2, balustradeThickness, 16);
@@ -2641,19 +2226,19 @@ function generateWorld() {
                 scene.add(cylinderInner1, cylinderInner2, cylinderOuter1, cylinderOuter2);
             }
 
-            // Balustrades for Escalator DOWN A (Right side, X from SETTINGS.corridorWidth to SETTINGS.corridorWidth + escalatorWidth)
+            // Balustrades for Escalator DOWN (Right side, X from SETTINGS.corridorWidth to SETTINGS.corridorWidth + escalatorWidth)
             const startDownBalustrade = new THREE.Vector3(SETTINGS.corridorWidth + SETTINGS.escalatorWidth / 2, currentFloorTopY-floorDepth/2, totalCorridorLength + 3.5);
             const endDownBalustrade = new THREE.Vector3(SETTINGS.corridorWidth + SETTINGS.escalatorWidth / 2, lowerFloorTopY-floorDepth, totalCorridorLength + SETTINGS.escalatorLength + 4 );
             const dirDownBalustrade = new THREE.Vector3().subVectors(endDownBalustrade, startDownBalustrade);
             const lengthDownBalustrade = dirDownBalustrade.length();
             const centerPosDownBalustrade = new THREE.Vector3().addVectors(startDownBalustrade, endDownBalustrade).multiplyScalar(0.5);
 
-            // Calculate the Y position of the ramp surface at the center Z for DOWN escalator A
+            // Calculate the Y position of the ramp surface at the center Z for DOWN escalator
             const centerZ_DownBalustrade = centerPosDownBalustrade.z;
             const rampSurfaceY_at_centerZ_Down = startDownBalustrade.y + (centerZ_DownBalustrade - startDownBalustrade.z) / (endDownBalustrade.z - startDownBalustrade.z) * (endDownBalustrade.y - startDownBalustrade.y);
             const balustradeCenterY_Down = rampSurfaceY_at_centerZ_Down + balustradeHeight / 2;
 
-            // Inner balustrade A (closer to corridor, X=SETTINGS.corridorWidth)
+            // Inner balustrade (closer to corridor, X=SETTINGS.corridorWidth)
             const innerBalustradeDownGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, lengthDownBalustrade);
             const innerBalustradeDown = new THREE.Mesh(innerBalustradeDownGeo, balustradeMaterial);
             innerBalustradeDown.name = `Balustrade_Down_Inner_F${i}-F${i-1}`;
@@ -2662,7 +2247,7 @@ function generateWorld() {
             scene.add(innerBalustradeDown);
             worldObjects.push(innerBalustradeDown);
 
-            // Outer balustrade A (X=SETTINGS.corridorWidth + escalatorWidth)
+            // Outer balustrade (X=SETTINGS.corridorWidth + escalatorWidth)
             const outerBalustradeDownGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, lengthDownBalustrade);
             const outerBalustradeDown = new THREE.Mesh(outerBalustradeDownGeo, balustradeMaterial);
             outerBalustradeDown.name = `Balustrade_Down_Outer_F${i}-F${i-1}`;
@@ -2671,11 +2256,11 @@ function generateWorld() {
             scene.add(outerBalustradeDown);
             worldObjects.push(outerBalustradeDown);
 
-            // Add cylinders for escalator DOWN balustrades A (posts at end sides)
+            // Add cylinders for escalator DOWN balustrades (posts at end sides)
             {
                 const cylinderGeo = new THREE.CylinderGeometry(balustradeHeight/2, balustradeHeight/2, balustradeThickness, 16);
                 cylinderGeo.rotateZ(Math.PI/2);
-                // For down balustrade A, use startDownBalustrade and endDownBalustrade
+                // For down balustrade, use startDownBalustrade and endDownBalustrade
                 const downDir = new THREE.Vector3().subVectors(endDownBalustrade, startDownBalustrade).normalize();
                 const halfLengthDown = lengthDownBalustrade / 2;
                 // For inner balustrade DOWN:
@@ -2696,136 +2281,6 @@ function generateWorld() {
                 cylinderOuterDown2.position.copy(outerDownEnd2);
                 scene.add(cylinderInnerDown1, cylinderInnerDown2, cylinderOuterDown1, cylinderOuterDown2);
             }
-            // --- End of Balustrades Wing A --- /////////////
-
-            // Balustrades for Escalators in Wing-B ////////////////////// BBBBBBB
-            // Balustrades for Escalator B UP (Left side, X from -escalatorWidth to 0)
-            const startUpBalustradeB = new THREE.Vector3(
-                - (SETTINGS.escalatorWidth / 2), 
-                lowerFloorTopY-floorDepth, 
-                -16 - totalCorridorLength - SETTINGS.escalatorLength - 4 
-            );
-            const endUpBalustradeB = new THREE.Vector3(- (SETTINGS.escalatorWidth / 2), 
-                currentFloorTopY-floorDepth/2, 
-                -16 -totalCorridorLength - 3.5);
-            const dirUpBalustradeB = new THREE.Vector3().subVectors(endUpBalustradeB, startUpBalustradeB);
-            const lengthUpBalustradeB = dirUpBalustradeB.length();
-            const centerPosUpBalustradeB = new THREE.Vector3().addVectors(startUpBalustradeB, endUpBalustradeB).multiplyScalar(0.5);
-
-            // Calculate the Y position of the ramp surface at the center Z for UP escalator B
-            const centerZ_UpBalustradeB = centerPosUpBalustradeB.z;
-            const rampSurfaceY_at_centerZ_UpB = startUpBalustradeB.y + (centerZ_UpBalustradeB - startUpBalustradeB.z) / (endUpBalustradeB.z - startUpBalustradeB.z) * (endUpBalustradeB.y - startUpBalustradeB.y);
-            const balustradeCenterY_UpB = rampSurfaceY_at_centerZ_UpB + balustradeHeight / 2;
-
-            // Inner balustrade B (closer to corridor, X=0)
-            const innerBalustradeUpGeoB = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, lengthUpBalustradeB);
-            const innerBalustradeUpB = new THREE.Mesh(innerBalustradeUpGeoB, balustradeMaterial);
-            innerBalustradeUpB.name = `Balustrade_B_Up_Inner_F${i-1}-F${i}`;
-            innerBalustradeUpB.position.set(0 - balustradeThickness / 2, balustradeCenterY_UpB, centerPosUpBalustradeB.z);
-            innerBalustradeUpB.lookAt(innerBalustradeUpB.position.clone().add(dirUpBalustradeB));
-            scene.add(innerBalustradeUpB);
-            worldObjects.push(innerBalustradeUpB);
-
-            // Outer balustrade B (X=-escalatorWidth)
-            const outerBalustradeUpGeoB = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, lengthUpBalustradeB);
-            const outerBalustradeUpB = new THREE.Mesh(outerBalustradeUpGeoB, balustradeMaterial);
-            outerBalustradeUpB.name = `Balustrade_B_Up_Outer_F${i-1}-F${i}`;
-            outerBalustradeUpB.position.set(-SETTINGS.escalatorWidth + balustradeThickness / 2, balustradeCenterY_UpB, centerPosUpBalustradeB.z);
-            outerBalustradeUpB.lookAt(outerBalustradeUpB.position.clone().add(dirUpBalustradeB));
-            scene.add(outerBalustradeUpB);
-            worldObjects.push(outerBalustradeUpB);
-
-            // Add cylinders for escalator UP balustrades B (posts at end sides)
-            {
-                // Create a cylinder with diameter = balustradeHeight and height = balustradeThickness.
-                const cylinderGeoB = new THREE.CylinderGeometry(balustradeHeight/2, balustradeHeight/2, balustradeThickness, 16);
-                cylinderGeoB.rotateZ(Math.PI/2);
-                // up direction along the balustrade (use already computed startUpBalustrade and endUpBalustrade)
-                const upDirB = new THREE.Vector3().subVectors(endUpBalustradeB, startUpBalustradeB).normalize();
-                const halfLengthUpB = lengthUpBalustradeB / 2;
-                // For inner balustrade UP: compute endpoint centers from innerBalustradeUp.position (which is center of the box)
-                const innerCenterB = innerBalustradeUpB.position.clone();
-                const innerEnd1B = innerCenterB.clone().sub(upDirB.clone().multiplyScalar(halfLengthUpB));
-                const innerEnd2B = innerCenterB.clone().add(upDirB.clone().multiplyScalar(halfLengthUpB));
-                const cylinderInner1B = new THREE.Mesh(cylinderGeoB, balustradeMaterial);
-                cylinderInner1B.position.copy(innerEnd1B);
-                const cylinderInner2B = new THREE.Mesh(cylinderGeoB, balustradeMaterial);
-                cylinderInner2B.position.copy(innerEnd2B);
-                // For outer balustrade UP:
-                const outerCenterB = outerBalustradeUpB.position.clone();
-                const outerEnd1B = outerCenterB.clone().sub(upDirB.clone().multiplyScalar(halfLengthUpB));
-                const outerEnd2 = outerCenterB.clone().add(upDirB.clone().multiplyScalar(halfLengthUpB));
-                const cylinderOuter1B = new THREE.Mesh(cylinderGeoB, balustradeMaterial);
-                cylinderOuter1B.position.copy(outerEnd1B);
-                const cylinderOuter2B = new THREE.Mesh(cylinderGeoB, balustradeMaterial);
-                cylinderOuter2B.position.copy(outerEnd2);
-                scene.add(cylinderInner1B, cylinderInner2B, cylinderOuter1B, cylinderOuter2B);
-            }
-
-            // Balustrades for Escalator DOWN B (Right side, X from SETTINGS.corridorWidth to SETTINGS.corridorWidth + escalatorWidth)
-            const startDownBalustradeB = new THREE.Vector3(
-                SETTINGS.corridorWidth + SETTINGS.escalatorWidth / 2, 
-                currentFloorTopY-floorDepth/2, 
-                -16 - totalCorridorLength - 3.5);
-            const endDownBalustradeB = new THREE.Vector3(
-                SETTINGS.corridorWidth + (SETTINGS.escalatorWidth / 2), 
-                lowerFloorTopY-floorDepth, 
-                -16 - totalCorridorLength - SETTINGS.escalatorLength - 4 );
-            const dirDownBalustradeB = new THREE.Vector3().subVectors(endDownBalustradeB, startDownBalustradeB);
-            const lengthDownBalustradeB = dirDownBalustradeB.length();
-            const centerPosDownBalustradeB = new THREE.Vector3().addVectors(startDownBalustradeB, endDownBalustradeB).multiplyScalar(0.5);
-
-            // Calculate the Y position of the ramp surface at the center Z for DOWN escalator B
-            const centerZ_DownBalustradeB = centerPosDownBalustradeB.z;
-            const rampSurfaceY_at_centerZ_DownB = startDownBalustradeB.y + (centerZ_DownBalustradeB - startDownBalustradeB.z) / (endDownBalustradeB.z - startDownBalustradeB.z) * (endDownBalustradeB.y - startDownBalustradeB.y);
-            const balustradeCenterY_DownB = rampSurfaceY_at_centerZ_DownB + balustradeHeight / 2;
-
-            // Inner balustrade B (closer to corridor, X=SETTINGS.corridorWidth)
-            const innerBalustradeDownGeoB = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, lengthDownBalustradeB);
-            const innerBalustradeDownB = new THREE.Mesh(innerBalustradeDownGeoB, balustradeMaterial);
-            innerBalustradeDownB.name = `Balustrade_B_Down_Inner_F${i}-F${i-1}`;
-            innerBalustradeDownB.position.set(SETTINGS.corridorWidth + balustradeThickness / 2, balustradeCenterY_DownB, centerPosDownBalustradeB.z);
-            innerBalustradeDownB.lookAt(innerBalustradeDownB.position.clone().add(dirDownBalustradeB));
-            scene.add(innerBalustradeDownB);
-            worldObjects.push(innerBalustradeDownB);
-
-            // Outer balustrade B (X=SETTINGS.corridorWidth + escalatorWidth)
-            const outerBalustradeDownGeoB = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, lengthDownBalustradeB);
-            const outerBalustradeDownB = new THREE.Mesh(outerBalustradeDownGeoB, balustradeMaterial);
-            outerBalustradeDownB.name = `Balustrade_B_Down_Outer_F${i}-F${i-1}`;
-            outerBalustradeDownB.position.set(SETTINGS.corridorWidth + SETTINGS.escalatorWidth - balustradeThickness / 2, balustradeCenterY_DownB, centerPosDownBalustradeB.z);
-            outerBalustradeDownB.lookAt(outerBalustradeDownB.position.clone().add(dirDownBalustradeB));
-            scene.add(outerBalustradeDownB);
-            worldObjects.push(outerBalustradeDownB);
-
-            // Add cylinders for escalator DOWN balustrades B (posts at end sides)
-            {
-                const cylinderGeoB = new THREE.CylinderGeometry(balustradeHeight/2, balustradeHeight/2, balustradeThickness, 16);
-                cylinderGeoB.rotateZ(Math.PI/2);
-                // For down balustrade, use startDownBalustrade and endDownBalustrade
-                const downDirB = new THREE.Vector3().subVectors(endDownBalustradeB, startDownBalustradeB).normalize();
-                const halfLengthDownB = lengthDownBalustradeB / 2;
-                // For inner balustrade DOWN:
-                const innerCenterDownB = innerBalustradeDownB.position.clone();
-                const innerDownEnd1B = innerCenterDownB.clone().sub(downDirB.clone().multiplyScalar(halfLengthDownB));
-                const innerDownEnd2B = innerCenterDownB.clone().add(downDirB.clone().multiplyScalar(halfLengthDownB));
-                const cylinderInnerDown1B = new THREE.Mesh(cylinderGeoB, balustradeMaterial);
-                cylinderInnerDown1B.position.copy(innerDownEnd1B);
-                const cylinderInnerDown2B = new THREE.Mesh(cylinderGeoB, balustradeMaterial);
-                cylinderInnerDown2B.position.copy(innerDownEnd2B);
-                // For outer balustrade DOWN:
-                const outerCenterDownB = outerBalustradeDownB.position.clone();
-                const outerDownEnd1B = outerCenterDownB.clone().sub(downDirB.clone().multiplyScalar(halfLengthDownB));
-                const outerDownEnd2B = outerCenterDownB.clone().add(downDirB.clone().multiplyScalar(halfLengthDownB));
-                const cylinderOuterDown1B = new THREE.Mesh(cylinderGeoB, balustradeMaterial);
-                cylinderOuterDown1B.position.copy(outerDownEnd1B);
-                const cylinderOuterDown2B = new THREE.Mesh(cylinderGeoB, balustradeMaterial);
-                cylinderOuterDown2B.position.copy(outerDownEnd2B);
-                scene.add(cylinderInnerDown1B, cylinderInnerDown2B, cylinderOuterDown1B, cylinderOuterDown2B);
-            }
-            // --- End of Balustrades Wing B --- /////////////
-
-
            } // END OF ESCALATORS ////////////////////////////////////////
             
             
@@ -2862,7 +2317,41 @@ function generateWorld() {
         shaftWallRight.castShadow = true; shaftWallRight.receiveShadow = true;
         scene.add(shaftWallRight); worldObjects.push(shaftWallRight);
 
-        
+        // Shaft Wall Back
+        /* const shaftWallBackGeo = new THREE.BoxGeometry(overallShaftActualWidth, SETTINGS.floorHeight, wallDepth);
+        const shaftWallBack = new THREE.Mesh(shaftWallBackGeo, wallMaterial);
+        shaftWallBack.name = `ShaftWall_Back_F${i}`;
+        shaftWallBack.position.set(
+            overallShaftActualCenterX, // Adjusted
+            floorY + SETTINGS.floorHeight / 2,
+            overallShaftMinZ - wallDepth / 2
+        );
+        shaftWallBack.castShadow = true; shaftWallBack.receiveShadow = true;
+        scene.add(shaftWallBack); worldObjects.push(shaftWallBack); */
+
+        // Lintel/Cap Wall above elevator opening (front of shaft)
+        // Assuming standard door height for the opening.
+        // const openingHeight = SETTINGS.doorHeight; // This was for the old lintel
+        // const capWallHeight = SETTINGS.wallHeight - openingHeight; // This was for the old lintel
+        /* if (capWallHeight > 0.01) {
+            const capWallGeo = new THREE.BoxGeometry(currentElevatorConfig.shaftWidth, capWallHeight, wallDepth);
+            const capWallNear = new THREE.Mesh(capWallGeo, wallMaterial); // Use wallMaterial
+            capWallNear.name = `ShaftLintel_F${i}`;
+            capWallNear.position.set(
+                currentElevatorConfig.x,
+                floorY + openingHeight + capWallHeight / 2, // Positioned above door opening
+                currentElevatorConfig.z + currentElevatorConfig.shaftDepth / 2 + wallDepth / 2 // Front of shaft
+            );
+            capWallNear.castShadow = true; capWallNear.receiveShadow = true;
+            scene.add(capWallNear); worldObjects.push(capWallNear);
+        } */
+
+        // Fillers next to the opening if the shaft is wider than a standard door
+        // This part of your complex if we want actual elevator doors. For now, assume open front or simple fillers.
+        // The current `capWallNear` spans the whole shaft width above the opening.
+        // If we need side fillers for the opening itself (from floor to openingHeight):
+        // This would depend on how elevator doors are implemented.
+        // For now, the shaft is open at the front up to `openingHeight`.
 
         // The old "capWallNear" that filled the floorDepth thickness above wallHeight:
         const floorCapGeo = new THREE.BoxGeometry(overallShaftActualWidth, SETTINGS.floorHeight - SETTINGS.wallHeight, wallDepth);
@@ -2877,47 +2366,6 @@ function generateWorld() {
         capWallNear.receiveShadow = true;
         scene.add(capWallNear);
         worldObjects.push(capWallNear);
-
-        // Place enemies on office floors (Moved here to be within the 'i' loop scope)
-        if (i >= 0) { // Office Floors
-            // floorY is defined at the start of this loop
-
-            // Wing A Enemies
-            // 1. Corridor Enemy (random Z)
-            const randomCorridorZ_A = Math.random() * totalCorridorLength;
-            createEnemy(SETTINGS.corridorWidth / 2, floorY, randomCorridorZ_A, i);
-
-            // 2. Left Room Enemy (random room)
-            const randomLeftRoomIndex_A = Math.floor(Math.random() * SETTINGS.doorsPerSide);
-            const leftRoomCenterZ_A = (randomLeftRoomIndex_A + 0.5) * SETTINGS.corridorSegmentLength;
-            const leftRoomCenterX_A = SETTINGS.corridorWidth + SETTINGS.roomSize / 2;
-            createEnemy(leftRoomCenterX_A, floorY, leftRoomCenterZ_A, i);
-
-            // 3. Right Room Enemy (random room)
-            const randomRightRoomIndex_A = Math.floor(Math.random() * SETTINGS.doorsPerSide);
-            const rightRoomCenterZ_A = (randomRightRoomIndex_A + 0.5) * SETTINGS.corridorSegmentLength;
-            const rightRoomCenterX_A = -SETTINGS.roomSize / 2;
-            createEnemy(rightRoomCenterX_A, floorY, rightRoomCenterZ_A, i);
-
-            // Wing B Enemies
-            // 1. Corridor Enemy (random Z)
-            // B-wing corridor Z ranges from -16 - totalCorridorLength (far end) to -16 (near end)
-            const randomCorridorZ_B = -16 - (Math.random() * totalCorridorLength);
-            createEnemy(SETTINGS.corridorWidth / 2, floorY, randomCorridorZ_B, i);
-
-            // 2. Left Room Enemy (random room)
-            const randomLeftRoomIndex_B = Math.floor(Math.random() * SETTINGS.doorsPerSide);
-            const leftRoomCenterZ_B = ((randomLeftRoomIndex_B + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
-            const leftRoomCenterX_B = SETTINGS.corridorWidth + SETTINGS.roomSize / 2; // Same X as A-wing left rooms
-            createEnemy(leftRoomCenterX_B, floorY, leftRoomCenterZ_B, i);
-
-            // 3. Right Room Enemy (random room)
-            const randomRightRoomIndex_B = Math.floor(Math.random() * SETTINGS.doorsPerSide);
-            const rightRoomCenterZ_B = ((randomRightRoomIndex_B + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
-            const rightRoomCenterX_B = -SETTINGS.roomSize / 2; // Same X as A-wing right rooms
-            createEnemy(rightRoomCenterX_B, floorY, rightRoomCenterZ_B, i);
-        }
-
     }
 
     // Initial camera position relative to the active elevator
@@ -2933,8 +2381,7 @@ function generateWorld() {
 
     // Rotate the camera to look down the hallway
     controls.getObject().rotation.y = Math.PI; // Rotate 180 degrees (facing opposite direction
-}); // End of fontLoader.load callback
-} // End of generateWorld function
+}
 
 function createElevatorPistonMesh(elevatorObj, material) {
     const bottomShaftThickness = 0.2;
@@ -3583,54 +3030,32 @@ function callSpecificElevatorToFloor(elevatorInstance, targetFloorIndex) {
 
 function shoot() {
     if (!controls.isLocked) return;
-
-    // Player shoots a projectile
-    const projectileStartOffset = 0.5; // Distance in front of camera to spawn projectile
-    const projectileDirection = new THREE.Vector3();
-    camera.getWorldDirection(projectileDirection); // Get the direction camera is facing
-
-    const projectileStartPosition = new THREE.Vector3();
-    camera.getWorldPosition(projectileStartPosition); // Get camera's world position
-    
-    // Offset the start position along the direction vector
-    projectileStartPosition.addScaledVector(projectileDirection, projectileStartOffset);
-    // Adjust Y to be closer to a gun barrel height if desired, relative to camera
-    projectileStartPosition.y -= 0.2; // Example: lower the spawn point slightly
-
-    createProjectile(projectileStartPosition, projectileDirection, true); // true: firedByPlayer
-
-    // Raycasting for other interactions (knobs, safes, windows, lights)
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2(0, 0);
     raycaster.setFromCamera(pointer, camera);
-    // Filter out enemies from direct interaction raycast as projectiles will handle them
-    const interactables = [...lights, ...doors, ...worldObjects.filter(obj => obj.userData.type !== 'enemy')];
-    const intersects = raycaster.intersectObjects(interactables, true);
-
+    const intersects = raycaster.intersectObjects([...lights, ...worldObjects, ...doors], true);
     if (intersects.length > 0) {
         const hit = intersects[0];
         const hitObject = hit.object;
-
         if (hitObject.userData.doorKnob) {
             const door = hitObject.parent;
-            if (door.userData.locked) { // Check if the door is actually locked
-                // Create a decal that remains with the door.
-                const decalTexture = new THREE.TextureLoader().load('textures/bulletHole.png'); // Ensure this texture exists
-                const decalMaterial = new THREE.MeshBasicMaterial({ 
-                    map: decalTexture, 
-                    transparent: true 
-                });
-                const decalGeometry = new THREE.PlaneGeometry(0.2, 0.2);
-                const decal = new THREE.Mesh(decalGeometry, decalMaterial);
-                // Set the decal's position and rotation to match the knob being shot.
-                decal.position.copy(hitObject.position);
-                decal.rotation.copy(hitObject.rotation);
-                decal.rotation.y = Math.PI / 2; // Align with the door surface
-                // Attach the decal to the door so it moves with it.
-                door.add(decal);
-                // Remove the doorknob so only the decal remains.
-                door.remove(hitObject);
-
+            // Create a decal that remains with the door.
+            const decalTexture = new THREE.TextureLoader().load('textures/bulletHole.png'); // Ensure this texture exists
+            const decalMaterial = new THREE.MeshBasicMaterial({ 
+                map: decalTexture, 
+                transparent: true 
+            });
+            const decalGeometry = new THREE.PlaneGeometry(0.2, 0.2);
+            const decal = new THREE.Mesh(decalGeometry, decalMaterial);
+            // Set the decal's position and rotation to match the knob being shot.
+            decal.position.copy(hitObject.position);
+            decal.rotation.copy(hitObject.rotation);
+            decal.rotation.y = Math.PI / 2; // Align with the door surface
+            // Attach the decal to the door so it moves with it.
+            door.add(decal);
+            // Remove the doorknob so only the decal remains.
+            door.remove(hitObject);
+            //if (door.userData.locked) {
                 door.userData.locked = false;
                 door.userData.isOpen = true;
                 
@@ -3661,24 +3086,24 @@ function shoot() {
                 }
 
                 console.log("Locked door unlocked by shooting doorknob; decal applied.");
-            } else {
+            //} else {
                 console.log("Doorknob shot replaced with decal.");
-            }
+            //}
         } else if (hitObject.userData.isSafeDial) {
             const safe = hitObject.parent;
             if (safe && safe.userData && !safe.userData.isCracked && !safe.userData.pointsAwarded) {
                 crackSafe(safe);
-                createBulletHole(hit.point, hit.face.normal);
+                createBulletHole(hit.point, hit.face.normal); // Add a bullet hole effect on the dial/safe
             }
         } else if (hitObject.userData.isWindow) {
+            // New: Break the window when shot
             breakWindow(hitObject);
-            createBulletHole(hit.point, hit.face.normal);
         } else {
             // For other hits, create a bullet hole normally
             createBulletHole(hit.point, hit.face.normal);
-            const directLightHit = lights.includes(hitObject) ? hitObject : (lights.includes(hitObject.parent) ? hitObject.parent : null);
-            if (directLightHit && directLightHit.userData && !directLightHit.userData.isDestroyed) {
-                 destroyLight(directLightHit);
+            const lightGroup = hitObject.parent;
+            if (lights.includes(lightGroup)) {
+                destroyLight(lightGroup);
             }
         }
     }
@@ -3997,33 +3422,8 @@ function resetGame() {
     playerLives = 3;
     playerScore = 0;
     isGameOver = false;
-
-    // Remove enemies from scene, enemies array, and worldObjects
-    enemies.forEach(enemy => {
-        scene.remove(enemy);
-        const indexInWorldObjects = worldObjects.indexOf(enemy);
-        if (indexInWorldObjects > -1) {
-            worldObjects.splice(indexInWorldObjects, 1);
-        }
-    });
-    enemies.length = 0; // Clear the array
-
-    // Clear projectiles
-    projectiles.forEach(projectile => {
-        scene.remove(projectile);
-        const indexInWorldObjects = worldObjects.indexOf(projectile);
-        if (indexInWorldObjects > -1) {
-            worldObjects.splice(indexInWorldObjects, 1);
-        }
-    });
-    projectiles.length = 0;
-    
     document.getElementById('gameOver').style.display = 'none';
     updateUI();
-
-    // Reset player state
-    playerState = 'upright';
-    playerHeight = 1.7;
 
     // Reset player position to the active elevator
     if (activeElevator) {
@@ -4032,9 +3432,7 @@ function resetGame() {
             activeElevator.platform.position.y + playerHeight + 0.2,
             activeElevator.platform.position.z
         );
-    } else {
-        camera.position.set(SETTINGS.corridorWidth / 2, playerHeight, 0); // Default spawn
-    }
+    } // Else, consider a default spawn point
     playerVelocity.set(0, 0, 0);
 }
 
@@ -4057,27 +3455,19 @@ function updatePlayer(deltaTime) {
     moveDirection.normalize(); // Ensure consistent speed diagonally
     moveDirection.applyEuler(cameraObject.rotation); // Apply camera rotation (Y-axis mainly for FPS)
 
-    // Player movement on escalator steps is now handled by calculateEscalatorBoost
-    const escalatorResult = calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorStarts, escalatorEnds, escalatorStepsB, escalatorStartsB, escalatorEndsB, SETTINGS, deltaTime, playerHeight);
-    const escalatorBoostVector = escalatorResult.boost; // This is (0,0,0) if direct movement is applied by calcEscBoost
-
-    if (escalatorResult.disembarkedDown) {
-        playerVelocity.y = SETTINGS.jumpVelocity * 0.25; // Small upward pop (adjust multiplier as needed, e.g., 0.2 to 0.3)
-        playerOnGround = false; // Allow the pop to happen
-    }
+    const escalatorBoost = calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorStarts, escalatorEnds, SETTINGS, deltaTime);
 
     const deltaX = moveDirection.x * speed;
     const deltaZ = moveDirection.z * speed;
-    // const boostX = escalatorBoostVector.x; // If escalatorBoostVector was a pre-calculated delta
-    // const boostZ = escalatorBoostVector.z; // If escalatorBoostVector was a pre-calculated delta
-    // Since calculateEscalatorBoost directly moves the player or handles dismount,
-    // the returned 'boost' vector is (0,0,0) and doesn't need to be applied again here for XZ.
-    const totalDeltaX = deltaX; // + boostX;
-    const totalDeltaZ = deltaZ; // + boostZ;
+    const boostX = escalatorBoost.x * deltaTime;
+    const boostZ = escalatorBoost.z * deltaTime;
+    const totalDeltaX = deltaX + boostX;
+    const totalDeltaZ = deltaZ + boostZ;
 
     // --- Basic Collision Detection (Simple - Check X and Z separately) ---
     // Store original position
     const originalPosition = cameraObject.position.clone();
+
     // Move X
     cameraObject.position.x += totalDeltaX;
     if (checkCollision()) {
@@ -4124,40 +3514,27 @@ function updatePlayer(deltaTime) {
     }
 
     // --- Escalator Area Color Logic ---
-    let escalatorFoundThisFrame = false;
-    let typeThisFrame = null;
-    let floorThisFrame = null;
-    let wingThisFrame = null; // 'A' or 'B'
+    let escalatorFound = false;
+    let escalatorType = null;
+    let escalatorFloor = null;
     const playerPos = controls.getObject().position;
 
-    // Check Wing A starts
+    // Check if player is on any startEscUp
     for (const [floor, mesh] of Object.entries(escalatorStarts.up)) {
         if (isPlayerOnMesh(playerPos, mesh)) {
-            escalatorFoundThisFrame = true; typeThisFrame = 'up'; floorThisFrame = parseInt(floor); wingThisFrame = 'A';
+            escalatorFound = true;
+            escalatorType = 'up';
+            escalatorFloor = parseInt(floor);
             break;
         }
     }
-    if (!escalatorFoundThisFrame) {
+    // If not on up, check down
+    if (!escalatorFound) {
         for (const [floor, mesh] of Object.entries(escalatorStarts.down)) {
             if (isPlayerOnMesh(playerPos, mesh)) {
-                escalatorFoundThisFrame = true; typeThisFrame = 'down'; floorThisFrame = parseInt(floor); wingThisFrame = 'A';
-                break;
-            }
-        }
-    }
-    // Check Wing B starts if not found in A
-    if (!escalatorFoundThisFrame) {
-        for (const [floor, mesh] of Object.entries(escalatorStartsB.up)) {
-            if (isPlayerOnMesh(playerPos, mesh)) {
-                escalatorFoundThisFrame = true; typeThisFrame = 'up'; floorThisFrame = parseInt(floor); wingThisFrame = 'B';
-                break;
-            }
-        }
-    }
-    if (!escalatorFoundThisFrame) {
-        for (const [floor, mesh] of Object.entries(escalatorStartsB.down)) {
-            if (isPlayerOnMesh(playerPos, mesh)) {
-                escalatorFoundThisFrame = true; typeThisFrame = 'down'; floorThisFrame = parseInt(floor); wingThisFrame = 'B';
+                escalatorFound = true;
+                escalatorType = 'down';
+                escalatorFloor = parseInt(floor);
                 break;
             }
         }
@@ -4165,31 +3542,24 @@ function updatePlayer(deltaTime) {
 
     // Only update if state changed
     if (
-        playerOnEscalator.type !== typeThisFrame ||
-        playerOnEscalator.floor !== floorThisFrame ||
-        playerOnEscalator.wing !== wingThisFrame
+        playerOnEscalator.type !== escalatorType ||
+        playerOnEscalator.floor !== escalatorFloor
     ) {
         // Reset all steps to EscalatorMaterial
-        for (const steps of Object.values(escalatorSteps.up))   { steps.forEach(step => { step.material = window.EscalatorMaterial; }); }
-        for (const steps of Object.values(escalatorSteps.down)) { steps.forEach(step => { step.material = window.EscalatorMaterial; }); }
-        for (const steps of Object.values(escalatorStepsB.up))  { steps.forEach(step => { step.material = window.EscalatorMaterial; }); }
-        for (const steps of Object.values(escalatorStepsB.down)){ steps.forEach(step => { step.material = window.EscalatorMaterial; }); }
-
-        // If on an escalator, set its steps to EscalatorEmbarkMaterial
-        if (escalatorFoundThisFrame && typeThisFrame && floorThisFrame !== null && wingThisFrame) {
-            if (wingThisFrame === 'A' && escalatorSteps[typeThisFrame] && escalatorSteps[typeThisFrame][floorThisFrame]) {
-                escalatorSteps[typeThisFrame][floorThisFrame].forEach(step => {
-                    step.material = window.EscalatorEmbarkMaterial;
-                });
-            } else if (wingThisFrame === 'B' && escalatorStepsB[typeThisFrame] && escalatorStepsB[typeThisFrame][floorThisFrame]) {
-                escalatorStepsB[typeThisFrame][floorThisFrame].forEach(step => {
-                    step.material = window.EscalatorEmbarkMaterial;
-                });
-            }
+        for (const [floor, steps] of Object.entries(escalatorSteps.up)) {
+            steps.forEach(step => { step.material = window.EscalatorMaterial; });
         }
-        playerOnEscalator.type = typeThisFrame;
-        playerOnEscalator.floor = floorThisFrame;
-        playerOnEscalator.wing = wingThisFrame;
+        for (const [floor, steps] of Object.entries(escalatorSteps.down)) {
+            steps.forEach(step => { step.material = window.EscalatorMaterial; });
+        }
+        // If on an escalator, set its steps to EscalatorEmbarkMaterial
+        if (escalatorFound && escalatorType && escalatorFloor !== null) {
+            escalatorSteps[escalatorType][escalatorFloor].forEach(step => {
+                step.material = window.EscalatorEmbarkMaterial;
+            });
+        }
+        playerOnEscalator.type = escalatorType;
+        playerOnEscalator.floor = escalatorFloor;
     }
     
 }
@@ -4257,203 +3627,6 @@ function updateUI() {
     }
 }
 
-
-function updateEnemies(deltaTime) {
-    if (!controls.isLocked || !camera) return; // Ensure camera and controls are ready
-
-    const playerCameraObject = controls.getObject();
-    const playerWorldPosition = new THREE.Vector3();
-    playerCameraObject.getWorldPosition(playerWorldPosition);
-
-    const playerBodyCenter = playerWorldPosition.clone();
-    playerBodyCenter.y -= playerHeight / 2;
-
-    enemies.forEach(enemy => {
-        if (enemy.userData.health <= 0) return;
-
-        const enemyPosition = enemy.position.clone();
-        const distanceToPlayer = enemyPosition.distanceTo(playerBodyCenter);
-
-        if (distanceToPlayer > ENEMY_SETTINGS.activationRadius) {
-            return;
-        }
-
-        const lookAtTarget = playerBodyCenter.clone();
-        lookAtTarget.y = enemyPosition.y;
-        enemy.lookAt(lookAtTarget);
-
-        const rayOrigin = enemyPosition.clone();
-        rayOrigin.y += ENEMY_SETTINGS.height * 0.4; // Enemy "eye" level
-
-        const directionToPlayer = playerBodyCenter.clone().sub(rayOrigin).normalize();
-        const raycaster = new THREE.Raycaster(rayOrigin, directionToPlayer, 0.1, ENEMY_SETTINGS.losMaxDistance);
-
-        const obstacles = worldObjects.filter(obj => obj !== enemy && obj.userData.type !== 'projectile' && obj !== playerCameraObject.parent && obj !== camera);
-        const intersects = raycaster.intersectObjects(obstacles, true);
-
-        let playerInLOS = true;
-        if (intersects.length > 0) {
-            if (intersects[0].distance < distanceToPlayer - 0.5) { // 0.5 tolerance
-                playerInLOS = false;
-            }
-        }
-
-        if (playerInLOS && distanceToPlayer <= ENEMY_SETTINGS.losMaxDistance) {
-            const currentTime = clock.getElapsedTime() * 1000;
-            if (currentTime > enemy.userData.lastShotTime + ENEMY_SETTINGS.fireRate) {
-                enemy.userData.lastShotTime = currentTime;
-
-                let firePosition;
-                const gun = enemy.userData.gun;
-                const storedGunLength = enemy.userData.gunLength;
-
-                if (gun && storedGunLength > 0) {
-                    // Projectile emits from the tip of the gun.
-                    // The gun's local Z+ axis is its "forward" after rotation.
-                    const localTipPosition = new THREE.Vector3(0, 0, storedGunLength / 2);
-                    firePosition = gun.localToWorld(localTipPosition.clone()).addScaledVector(directionToPlayer, 0.1); // Add small offset forward
-                } else {
-                    // Fallback if gun isn't set up (shouldn't happen with the new code)
-                    firePosition = enemy.position.clone();
-                    const forwardVector = new THREE.Vector3(0, 0, -1); // Enemy's local forward
-                    forwardVector.applyQuaternion(enemy.quaternion);
-                    firePosition.addScaledVector(forwardVector, ENEMY_SETTINGS.depth / 2 + 0.1); // Spawn slightly in front
-                }
-
-                createProjectile(firePosition, directionToPlayer, false, enemy);
-            }
-        }
-    });
-}
-
-function updateProjectiles(deltaTime) {
-    const playerCameraPosition = controls.getObject().position;
-    const playerBodyCenter = playerCameraPosition.clone();
-    playerBodyCenter.y -= playerHeight / 2;
-    const sceneRemoveThreshold = 100; // Define the threshold for removing out-of-bounds projectiles
-
-    const playerCollisionBox = new THREE.Box3().setFromCenterAndSize(
-        playerBodyCenter,
-        new THREE.Vector3(0.7, playerHeight, 0.7) // Player's collision box, adjust size as needed
-    );
-
-    for (let i = projectiles.length - 1; i >= 0; i--) {
-        const projectile = projectiles[i];
-        let projectileNeedsRemoval = false;
-        let createHoleAt = null;
-        let holeNormal = null;
-
-        projectile.position.addScaledVector(projectile.userData.velocity, deltaTime);
-        const projectileBox = new THREE.Box3().setFromObject(projectile); // Calculate once per projectile
-
-        if (clock.getElapsedTime() - projectile.userData.spawnTime > 5) { // 5 seconds lifetime
-            projectileNeedsRemoval = true;
-        }
-
-        if (projectile.position.x > sceneRemoveThreshold || projectile.position.x < -sceneRemoveThreshold
-            || projectile.position.y > sceneRemoveThreshold || projectile.position.y < -sceneRemoveThreshold
-            || projectile.position.z > sceneRemoveThreshold || projectile.position.z < -sceneRemoveThreshold) {
-            projectileNeedsRemoval = true;
-        }
-
-        // Reason 3: Collision (if not already flagged for removal)
-        if (!projectileNeedsRemoval) {
-            // Check collision with player if fired by enemy
-            if (!projectile.userData.firedByPlayer && projectileBox.intersectsBox(playerCollisionBox)) {
-                applyDamageToPlayer(10); // Example damage
-                projectileNeedsRemoval = true;
-                createHoleAt = null; // No bullet hole on player
-            } else {
-                // Check collision with world objects (including enemies)
-                for (let j = worldObjects.length - 1; j >= 0; j--) {
-                    const wo = worldObjects[j];
-
-                    if (wo === projectile || wo.userData.type === 'projectile' || !wo.geometry || !wo.geometry.boundingBox) {
-                        continue;
-                    }
-
-                    // Explicitly skip collision check if the world object is the firer's gun
-                    const projFirer = projectile.userData.firer;
-                    if (projFirer && projFirer.userData.gun && wo === projFirer.userData.gun) {
-                         continue; // Skip collision with the firer's own gun
-                    }
-                     // Prevent projectile from colliding with the entity that fired it immediately
-                    if (projectile.userData.firedByPlayer && wo === camera.parent) continue; // Player projectile vs player
-                    // Add similar check if enemies can fire (wo === enemyThatFired)
-
-                    const objectWorldBox = new THREE.Box3().copy(wo.geometry.boundingBox).applyMatrix4(wo.matrixWorld);
-                    if (projectileBox.intersectsBox(objectWorldBox)) {
-                        projectileNeedsRemoval = true;
-                        // Default to creating a hole, can be overridden for self-hits or player hits
-                        createHoleAt = projectile.position.clone(); 
-
-                        if (wo.userData.type === 'enemy') {
-                            const enemyHit = wo;
-                            const projFirer = projectile.userData.firer;
-                            const projByPlayer = projectile.userData.firedByPlayer;
-                            
-                            console.log(`ENEMY PROJECTILE COLLISION DETAILS: Proj ID: ${projectile.id}, Firer: ${projFirer ? projFirer.name + ' (ID: ' + projFirer.id + ')' : 'None/Player'}, Hit Enemy: ${enemyHit.name} (ID: ${enemyHit.id}), ProjByPlayer: ${projByPlayer}`);
-                            holeNormal = projectile.userData.velocity.clone().normalize().negate(); // Only calculate normal if creating a hole
-                            if (projByPlayer) {
-                                // Player's projectile hits an enemy
-                                console.log("Player projectile hit enemy:", wo.name);
-                                playerScore += 100;
-                                updateUI();
-                                // wo.userData.health -= projectileDamage; // Implement health/damage
-                                // Remove enemy hit by player
-                                scene.remove(enemyHit);
-                                worldObjects.splice(j, 1); // wo is worldObjects[j]
-                                const woIndexInEnemies = enemies.indexOf(enemyHit);
-                                if (woIndexInEnemies > -1) {
-                                    enemies.splice(woIndexInEnemies, 1);
-                                }
-                            } else {
-                                // Enemy's projectile hits an enemy
-                                if (projFirer && enemyHit === projFirer) {
-                                    // Enemy shot itself
-                                    console.log(`   CONFIRMED SELF-HIT: ${projFirer.name} (ID: ${projFirer.id}) shot self. Projectile removed, enemy unharmed. No hole.`);
-                                    createHoleAt = null; // No bullet hole on self
-                                    // Firer (enemyHit) is NOT removed. Projectile will be removed.
-                                } else {
-                                    // Enemy projectile hits a DIFFERENT enemy (or firer is unknown)
-                                    // This is ACCIDENTAL FRIENDLY FIRE - the other enemy is hit.
-                                    console.log(`   FRIENDLY FIRE / UNKNOWN FIRER: Projectile from ${projFirer ? projFirer.name + ' (ID: ' + projFirer.id + ')' : 'Unknown/Player'} hit ${enemyHit.name} (ID: ${enemyHit.id}). ENEMY REMOVED!`);
-                                    scene.remove(enemyHit);
-                                    worldObjects.splice(j, 1); // wo is worldObjects[j]
-                                    const woIndexInEnemies = enemies.indexOf(enemyHit);
-                                    if (woIndexInEnemies > -1) {
-                                        enemies.splice(woIndexInEnemies, 1);
-                                    }
-                                }
-                            }
-                        } else { // Projectile hit a non-enemy world object
-                             holeNormal = projectile.userData.velocity.clone().normalize().negate(); // Calculate normal for non-enemy hits
-                             // console.log("Projectile hit non-enemy:", wo.name);
-                        }
-                        break; // Projectile is consumed
-
-                    }
-                }
-            }
-        }
-        // If projectile needs removal for any reason
-        if (projectileNeedsRemoval) {
-            scene.remove(projectile);
-            projectiles.splice(i, 1); // Remove from projectiles array (safe due to backward i loop)
-
-            // Consistently remove projectile from worldObjects
-            const projectileIndexInWorldObjects = worldObjects.indexOf(projectile);
-            if (projectileIndexInWorldObjects > -1) {
-                worldObjects.splice(projectileIndexInWorldObjects, 1);
-            }
-            if (createHoleAt && holeNormal) {
-                // createBulletHole(createHoleAt, holeNormal); // Re-enable if you want bullet holes on everything
-            }
-        }
-    }
-}
-
-
 // --- Animation Loop ---
 function animate() {
     if (isGameOver) return; // Stop animation loop if game is over
@@ -4464,8 +3637,6 @@ function animate() {
     if (controls.isLocked) {
         updatePlayer(deltaTime);
         updateElevators(deltaTime);
-        updateEnemies(deltaTime);
-        updateProjectiles(deltaTime);
         updateGarageDoors(deltaTime);
         updateUI();
         updateLODSystem();
@@ -4684,15 +3855,9 @@ function animate() {
                 escalatorSteps.up[floorIndex].forEach(step => {
                     step.material = window.EscalatorEmbarkMaterial; // Change material
                 });
-                escalatorStepsB.up[floorIndex].forEach(step => {
-                    step.material = window.EscalatorEmbarkMaterial; // Change material
-                });
             } else if (objName.startsWith("Left Escalator Down")) {
                 const floorIndex = parseInt(objName.match(/\d+/)[0]); // Extract floor index
                 escalatorSteps.down[floorIndex].forEach(step => {
-                    step.material = window.EscalatorEmbarkMaterial; // Change material
-                });
-                escalatorStepsB.down[floorIndex].forEach(step => {
                     step.material = window.EscalatorEmbarkMaterial; // Change material
                 });
             }
@@ -4886,8 +4051,8 @@ function updateLODSystem() {
 // --- Start the application ---
 init();
 
-//const enemyGeometry = new THREE.BoxGeometry(1, 2, 1); // Example geometry for an enemy
-//const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Example material for an enemy
+const enemyGeometry = new THREE.BoxGeometry(1, 2, 1); // Example geometry for an enemy
+const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Example material for an enemy
 
 //const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
 //enemy.position.set(x, y, z); // Set the enemy's position

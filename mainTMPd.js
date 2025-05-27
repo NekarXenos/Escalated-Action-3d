@@ -108,9 +108,9 @@ const allRoomsData = []; // Stores data for each room for LOD management
     contentsGroup: THREE.Group, visibleByDoor: boolean, visibleByWindow: boolean, lamp: THREE.Group }
 */
 // --- Reusable Lamp Geometries & Materials (defined once) ---
-const lampConeGeo = new THREE.ConeGeometry(0.3, 0.2, 16);
+const lampConeGeo = new THREE.ConeGeometry(0.3, 0.2, 8);
 const lampChainGeo = new THREE.BoxGeometry(0.05, 0.5, 0.05);
-const lampBulbGeo = new THREE.SphereGeometry(0.08, 16, 8); // bulbRadius = 0.08
+const lampBulbGeo = new THREE.SphereGeometry(0.08, 8, 8); // bulbRadius = 0.08
 const lampBottomDiskGeo = new THREE.CircleGeometry(0.3, 16);
 
 // Materials for standard corridor/area lamps (non-animated parts)
@@ -375,8 +375,37 @@ function createEnemy(x, y, z, floorIndex) {
         type: 'enemy',
         floorIndex: floorIndex,
         lastShotTime: 0,
-        health: 100 // Basic health
+        health: 100, // Basic health
+        gun: null, // To store the gun mesh
+        gunLength: 0 // To store gun length for tip calculation
     };
+
+    // Create a gun for the enemy
+    const gunLength = 0.7; // Length of the gun barrel
+    const gunRadius = 0.05; // Radius of the gun barrel
+    const gunGeometry = new THREE.CylinderGeometry(gunRadius, gunRadius, gunLength, 8);
+    const gunMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 }); // Dark grey for the gun
+    const gunMesh = new THREE.Mesh(gunGeometry, gunMaterial);
+
+    // Orient the gun: Cylinder's length is along its local Y by default.
+    // Rotate it to align with the enemy's forward direction (local -Z).
+    gunMesh.rotation.x = Math.PI / 2;
+
+    // Position the gun relative to the enemy.
+    // The gun's origin is at its center. We position it so the tip protrudes.
+    // Move it to the enemy's local +X (right side).
+    const gunXOffset = -((ENEMY_SETTINGS.width / 2) + gunRadius + 0.1); // Position further to the left (enemy's right)
+    const gunYOffset = ENEMY_SETTINGS.height * 0.2; // Position slightly higher than center
+    const gunZOffset = -(ENEMY_SETTINGS.depth / 2 + gunLength / 2 - 0.1); // Protrude forward, slightly more embed for stability
+    gunMesh.position.set(gunXOffset, gunYOffset, gunZOffset);
+
+    enemyMesh.add(gunMesh); // Add gun as a child of the enemy
+    enemyMesh.userData.gun = gunMesh;
+    enemyMesh.userData.gunLength = gunLength;
+
+    // Diagnostic log:
+    // console.log(`Enemy ID: ${enemyMesh.id}, Gun ID: ${gunMesh.id}, Gun Parent ID: ${gunMesh.parent ? gunMesh.parent.id : 'null'}, Gun Visible: ${gunMesh.visible}`);
+
     scene.add(enemyMesh);
     enemies.push(enemyMesh);
     worldObjects.push(enemyMesh); // For collision with player movement and projectiles
@@ -384,15 +413,17 @@ function createEnemy(x, y, z, floorIndex) {
 }
 
 // --- Projectile Creation ---
-function createProjectile(startPosition, direction, firedByPlayer = false) {
+function createProjectile(startPosition, direction, firedByPlayer = false, firer = null) {
     const projectile = new THREE.Mesh(projectileGeometry, projectileMaterial);
     projectile.position.copy(startPosition);
     projectile.userData = {
         type: 'projectile',
         velocity: direction.clone().multiplyScalar(ENEMY_SETTINGS.projectileSpeed),
         spawnTime: clock.getElapsedTime(),
-        firedByPlayer: firedByPlayer // Mark who fired the projectile
+        firedByPlayer: firedByPlayer, // Mark who fired the projectile
+        firer: firer // Store the entity that fired the projectile
     };
+    // console.log(`Projectile created by ${firer ? firer.name + ' (ID: ' + firer.id + ')' : (firedByPlayer ? 'Player' : 'Unknown')}. Projectile ID: ${projectile.id}`);
     scene.add(projectile);
     projectiles.push(projectile);
     worldObjects.push(projectile); // Add to worldObjects for collision detection
@@ -1584,7 +1615,7 @@ function generateWorld() {
                     safeR.castShadow = true; safeR.receiveShadow = true; safeR.name = `Safe_R_F${i}_D${j}`;
                     safeR.userData = defaultSafeUserData(); // scene.add(safeR); worldObjects.push(safeR);
                     rightRoomContents.add(safeR); worldObjects.push(safeR);
-                    const dialRGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
+                    const dialRGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
                     const dialR = new THREE.Mesh(dialRGeo, dialMaterial);
                     dialR.position.set(safeDepth / 2, 0, 0); dialR.rotation.z = -Math.PI / 2;
                     dialR.userData.isSafeDial = true; dialR.name = `Dial_Safe_R_F${i}_D${j}`; safeR.add(dialR);
@@ -1662,7 +1693,7 @@ function generateWorld() {
                     safeBR.castShadow = true; safeBR.receiveShadow = true; safeBR.name = `Safe_B_R_F${i}_D${j}`;
                     safeBR.userData = defaultSafeUserData(); // scene.add(safeR); worldObjects.push(safeR);
                     rightRoomContents.add(safeBR); worldObjects.push(safeBR);
-                    const dialRBGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
+                    const dialRBGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
                     const dialRB = new THREE.Mesh(dialRBGeo, dialMaterial);
                     dialRB.position.set(safeDepth / 2, 0, 0); dialRB.rotation.z = -Math.PI / 2;
                     dialRB.userData.isSafeDial = true; dialRB.name = `Dial_Safe_B_R_F${i}_D${j}`; safeBR.add(dialRB);
@@ -1735,7 +1766,7 @@ function generateWorld() {
                     safeL.castShadow = true; safeL.receiveShadow = true; safeL.name = `Safe_L_F${i}_D${j}`;
                     safeL.userData = defaultSafeUserData(); // scene.add(safeL); worldObjects.push(safeL);
                     leftRoomContents.add(safeL); worldObjects.push(safeL);
-                    const dialLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
+                    const dialLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
                     const dialL = new THREE.Mesh(dialLGeo, dialMaterial);
                     dialL.position.set(-safeDepth / 2, 0, 0); dialL.rotation.z = Math.PI / 2;
                     dialL.userData.isSafeDial = true; dialL.name = `Dial_Safe_L_F${i}_D${j}`; safeL.add(dialL);
@@ -1805,7 +1836,7 @@ function generateWorld() {
                                     safeBL.castShadow = true; safeBL.receiveShadow = true; safeBL.name = `Safe_L_F${i}_D${j}`;
                                     safeBL.userData = defaultSafeUserData(); // scene.add(safeL); worldObjects.push(safeL);
                                     leftRoomContents.add(safeBL); worldObjects.push(safeBL);
-                                    const dialBLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 16);
+                                    const dialBLGeo = new THREE.ConeGeometry(dialRadius, dialLength, 10);
                                     const dialBL = new THREE.Mesh(dialBLGeo, dialMaterial);
                                     dialBL.position.set(-safeDepth / 2, 0, 0); dialBL.rotation.z = Math.PI / 2;
                                     dialBL.userData.isSafeDial = true; dialBL.name = `Dial_Safe_B_L_F${i}_D${j}`; safeBL.add(dialBL);
@@ -2031,7 +2062,7 @@ function generateWorld() {
             const escLightPositions = [totalCorridorLength + 4, totalCorridorLength + 4 + (2*escalatorLength/3)];
             escLightPositions.forEach((zPos, idx) => {
                 // escalator bridge light creation logic
-                const lightGeo = new THREE.ConeGeometry(0.3, 0.2, 16);
+                const lightGeo = new THREE.ConeGeometry(0.3, 0.2, 8);
                 createStandardLamp(
                     SETTINGS.corridorWidth / 2,
                     floorY + SETTINGS.wallHeight - 0.5,
@@ -2048,7 +2079,7 @@ function generateWorld() {
             const escBLightBPositions = [escBBridgeStartRefZ, escBBridgeStartRefZ - (2*escalatorLength/3)];
             escBLightBPositions.forEach((zPos, idx) => {
                 // escalator bridge light creation logic
-                const lightBGeo = new THREE.ConeGeometry(0.3, 0.2, 16);
+                const lightBGeo = new THREE.ConeGeometry(0.3, 0.2, 8);
                 createStandardLamp(
                     SETTINGS.corridorWidth / 2,
                     floorY + SETTINGS.wallHeight - 0.5,
@@ -2850,15 +2881,41 @@ function generateWorld() {
         // Place enemies on office floors (Moved here to be within the 'i' loop scope)
         if (i >= 0) { // Office Floors
             // floorY is defined at the start of this loop
-            for (let j = 0; j < SETTINGS.doorsPerSide; j++) {
-                const segmentCenterZ_A = (j + 0.5) * SETTINGS.corridorSegmentLength;
-                const segmentCenterZ_B = ((j + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
 
-                // Place one enemy per segment in A-wing corridor
-                createEnemy(SETTINGS.corridorWidth / 2, floorY, segmentCenterZ_A, i);
-                // Place one enemy per segment in B-wing corridor
-                createEnemy(SETTINGS.corridorWidth / 2, floorY, segmentCenterZ_B, i);
-            }
+            // Wing A Enemies
+            // 1. Corridor Enemy (random Z)
+            const randomCorridorZ_A = Math.random() * totalCorridorLength;
+            createEnemy(SETTINGS.corridorWidth / 2, floorY, randomCorridorZ_A, i);
+
+            // 2. Left Room Enemy (random room)
+            const randomLeftRoomIndex_A = Math.floor(Math.random() * SETTINGS.doorsPerSide);
+            const leftRoomCenterZ_A = (randomLeftRoomIndex_A + 0.5) * SETTINGS.corridorSegmentLength;
+            const leftRoomCenterX_A = SETTINGS.corridorWidth + SETTINGS.roomSize / 2;
+            createEnemy(leftRoomCenterX_A, floorY, leftRoomCenterZ_A, i);
+
+            // 3. Right Room Enemy (random room)
+            const randomRightRoomIndex_A = Math.floor(Math.random() * SETTINGS.doorsPerSide);
+            const rightRoomCenterZ_A = (randomRightRoomIndex_A + 0.5) * SETTINGS.corridorSegmentLength;
+            const rightRoomCenterX_A = -SETTINGS.roomSize / 2;
+            createEnemy(rightRoomCenterX_A, floorY, rightRoomCenterZ_A, i);
+
+            // Wing B Enemies
+            // 1. Corridor Enemy (random Z)
+            // B-wing corridor Z ranges from -16 - totalCorridorLength (far end) to -16 (near end)
+            const randomCorridorZ_B = -16 - (Math.random() * totalCorridorLength);
+            createEnemy(SETTINGS.corridorWidth / 2, floorY, randomCorridorZ_B, i);
+
+            // 2. Left Room Enemy (random room)
+            const randomLeftRoomIndex_B = Math.floor(Math.random() * SETTINGS.doorsPerSide);
+            const leftRoomCenterZ_B = ((randomLeftRoomIndex_B + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
+            const leftRoomCenterX_B = SETTINGS.corridorWidth + SETTINGS.roomSize / 2; // Same X as A-wing left rooms
+            createEnemy(leftRoomCenterX_B, floorY, leftRoomCenterZ_B, i);
+
+            // 3. Right Room Enemy (random room)
+            const randomRightRoomIndex_B = Math.floor(Math.random() * SETTINGS.doorsPerSide);
+            const rightRoomCenterZ_B = ((randomRightRoomIndex_B + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
+            const rightRoomCenterX_B = -SETTINGS.roomSize / 2; // Same X as A-wing right rooms
+            createEnemy(rightRoomCenterX_B, floorY, rightRoomCenterZ_B, i);
         }
 
     }
@@ -4246,15 +4303,24 @@ function updateEnemies(deltaTime) {
             if (currentTime > enemy.userData.lastShotTime + ENEMY_SETTINGS.fireRate) {
                 enemy.userData.lastShotTime = currentTime;
 
-                const firePosition = enemy.position.clone();
-                const forwardVector = new THREE.Vector3(0, 0, -1);
-                forwardVector.applyQuaternion(enemy.quaternion);
-                firePosition.addScaledVector(forwardVector, ENEMY_SETTINGS.depth / 2 + 0.1);
-                // Adjust firePosition.y if gun is not at enemy center height
-                // firePosition.y += ENEMY_SETTINGS.height * 0.2; // Example
+                let firePosition;
+                const gun = enemy.userData.gun;
+                const storedGunLength = enemy.userData.gunLength;
 
-                createProjectile(firePosition, directionToPlayer);
-                // By default, firedByPlayer will be false in createProjectile
+                if (gun && storedGunLength > 0) {
+                    // Projectile emits from the tip of the gun.
+                    // The gun's local Z+ axis is its "forward" after rotation.
+                    const localTipPosition = new THREE.Vector3(0, 0, storedGunLength / 2);
+                    firePosition = gun.localToWorld(localTipPosition.clone()).addScaledVector(directionToPlayer, 0.1); // Add small offset forward
+                } else {
+                    // Fallback if gun isn't set up (shouldn't happen with the new code)
+                    firePosition = enemy.position.clone();
+                    const forwardVector = new THREE.Vector3(0, 0, -1); // Enemy's local forward
+                    forwardVector.applyQuaternion(enemy.quaternion);
+                    firePosition.addScaledVector(forwardVector, ENEMY_SETTINGS.depth / 2 + 0.1); // Spawn slightly in front
+                }
+
+                createProjectile(firePosition, directionToPlayer, false, enemy);
             }
         }
     });
@@ -4305,6 +4371,12 @@ function updateProjectiles(deltaTime) {
                     if (wo === projectile || wo.userData.type === 'projectile' || !wo.geometry || !wo.geometry.boundingBox) {
                         continue;
                     }
+
+                    // Explicitly skip collision check if the world object is the firer's gun
+                    const projFirer = projectile.userData.firer;
+                    if (projFirer && projFirer.userData.gun && wo === projFirer.userData.gun) {
+                         continue; // Skip collision with the firer's own gun
+                    }
                      // Prevent projectile from colliding with the entity that fired it immediately
                     if (projectile.userData.firedByPlayer && wo === camera.parent) continue; // Player projectile vs player
                     // Add similar check if enemies can fire (wo === enemyThatFired)
@@ -4312,30 +4384,54 @@ function updateProjectiles(deltaTime) {
                     const objectWorldBox = new THREE.Box3().copy(wo.geometry.boundingBox).applyMatrix4(wo.matrixWorld);
                     if (projectileBox.intersectsBox(objectWorldBox)) {
                         projectileNeedsRemoval = true;
-                        createHoleAt = projectile.position.clone();
-                        holeNormal = projectile.userData.velocity.clone().normalize().negate();
+                        // Default to creating a hole, can be overridden for self-hits or player hits
+                        createHoleAt = projectile.position.clone(); 
 
                         if (wo.userData.type === 'enemy') {
-                            if (projectile.userData.firedByPlayer) {
+                            const enemyHit = wo;
+                            const projFirer = projectile.userData.firer;
+                            const projByPlayer = projectile.userData.firedByPlayer;
+                            
+                            console.log(`ENEMY PROJECTILE COLLISION DETAILS: Proj ID: ${projectile.id}, Firer: ${projFirer ? projFirer.name + ' (ID: ' + projFirer.id + ')' : 'None/Player'}, Hit Enemy: ${enemyHit.name} (ID: ${enemyHit.id}), ProjByPlayer: ${projByPlayer}`);
+                            holeNormal = projectile.userData.velocity.clone().normalize().negate(); // Only calculate normal if creating a hole
+                            if (projByPlayer) {
+                                // Player's projectile hits an enemy
                                 console.log("Player projectile hit enemy:", wo.name);
                                 playerScore += 100;
                                 updateUI();
                                 // wo.userData.health -= projectileDamage; // Implement health/damage
+                                // Remove enemy hit by player
+                                scene.remove(enemyHit);
+                                worldObjects.splice(j, 1); // wo is worldObjects[j]
+                                const woIndexInEnemies = enemies.indexOf(enemyHit);
+                                if (woIndexInEnemies > -1) {
+                                    enemies.splice(woIndexInEnemies, 1);
+                                }
                             } else {
-                                console.log("Enemy projectile hit enemy (friendly fire):", wo.name);
-                                // wo.userData.health -= projectileDamage; // Implement health/damage
+                                // Enemy's projectile hits an enemy
+                                if (projFirer && enemyHit === projFirer) {
+                                    // Enemy shot itself
+                                    console.log(`   CONFIRMED SELF-HIT: ${projFirer.name} (ID: ${projFirer.id}) shot self. Projectile removed, enemy unharmed. No hole.`);
+                                    createHoleAt = null; // No bullet hole on self
+                                    // Firer (enemyHit) is NOT removed. Projectile will be removed.
+                                } else {
+                                    // Enemy projectile hits a DIFFERENT enemy (or firer is unknown)
+                                    // This is ACCIDENTAL FRIENDLY FIRE - the other enemy is hit.
+                                    console.log(`   FRIENDLY FIRE / UNKNOWN FIRER: Projectile from ${projFirer ? projFirer.name + ' (ID: ' + projFirer.id + ')' : 'Unknown/Player'} hit ${enemyHit.name} (ID: ${enemyHit.id}). ENEMY REMOVED!`);
+                                    scene.remove(enemyHit);
+                                    worldObjects.splice(j, 1); // wo is worldObjects[j]
+                                    const woIndexInEnemies = enemies.indexOf(enemyHit);
+                                    if (woIndexInEnemies > -1) {
+                                        enemies.splice(woIndexInEnemies, 1);
+                                    }
+                                }
                             }
-                            // For now, remove enemy on any projectile hit
-                            scene.remove(wo);
-                            worldObjects.splice(j, 1);
-                            const woIndexInEnemies = enemies.indexOf(wo);
-                            if (woIndexInEnemies > -1) {
-                                enemies.splice(woIndexInEnemies, 1);
-                            }
-                        } else {
-                            // console.log("Projectile hit non-enemy:", wo.name);
+                        } else { // Projectile hit a non-enemy world object
+                             holeNormal = projectile.userData.velocity.clone().normalize().negate(); // Calculate normal for non-enemy hits
+                             // console.log("Projectile hit non-enemy:", wo.name);
                         }
                         break; // Projectile is consumed
+
                     }
                 }
             }
@@ -4351,7 +4447,7 @@ function updateProjectiles(deltaTime) {
                 worldObjects.splice(projectileIndexInWorldObjects, 1);
             }
             if (createHoleAt && holeNormal) {
-                createBulletHole(createHoleAt, holeNormal);
+                // createBulletHole(createHoleAt, holeNormal); // Re-enable if you want bullet holes on everything
             }
         }
     }
