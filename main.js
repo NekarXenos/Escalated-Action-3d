@@ -122,6 +122,77 @@ const lampCorridorDiskMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa7
 
 
 // --- Initialization ---
+let frameTimes = [];
+let performanceCheckDone = false;
+let downgradeTriggered = false;
+
+function checkPerformanceAndDowngrade() {
+    if (performanceCheckDone) return;
+    const now = performance.now();
+    frameTimes.push(now);
+
+    // Only keep the last 10 seconds of frame times
+    while (frameTimes.length > 2 && (now - frameTimes[0]) > 10000) {
+        frameTimes.shift();
+    }
+
+    // After 10 seconds, check average FPS
+    if ((now - frameTimes[0]) >= 10000 && !downgradeTriggered) {
+        const avgFPS = (frameTimes.length - 1) / ((frameTimes[frameTimes.length - 1] - frameTimes[0]) / 1000);
+        if (avgFPS < 30) {
+            downgradeAllMaterials();
+            downgradeTriggered = true;
+            // Optional: Show a message
+            const msg = document.createElement('div');
+            msg.style.position = 'fixed';
+            msg.style.top = '10px';
+            msg.style.left = '50%';
+            msg.style.transform = 'translateX(-50%)';
+            msg.style.background = 'rgba(0,0,0,0.7)';
+            msg.style.color = '#fff';
+            msg.style.padding = '10px 20px';
+            msg.style.zIndex = 9999;
+            msg.style.fontSize = '18px';
+            msg.innerText = 'Performance mode enabled for smoother gameplay.';
+            document.body.appendChild(msg);
+            setTimeout(() => msg.remove(), 4000);
+        }
+        performanceCheckDone = true;
+    }
+}
+
+function downgradeAllMaterials() {
+    scene.traverse(obj => {
+        if (obj.isMesh && obj.material) {
+            // Handle multi-material meshes
+            if (Array.isArray(obj.material)) {
+                obj.material = obj.material.map(mat => downgradeMaterial(mat));
+            } else {
+                obj.material = downgradeMaterial(obj.material);
+            }
+        }
+    });
+}
+
+function downgradeMaterial(mat) {
+    // Only downgrade PBR materials
+    if (
+        mat.type === 'MeshStandardMaterial' ||
+        mat.type === 'MeshPhysicalMaterial' ||
+        mat.type === 'MeshPhongMaterial'
+    ) {
+        // Use color and map if present
+        return new THREE.MeshBasicMaterial({
+            color: mat.color ? mat.color.clone() : 0xffffff,
+            map: mat.map || null,
+            transparent: mat.transparent,
+            opacity: mat.opacity,
+            side: mat.side,
+        });
+    }
+    return mat;
+}
+
 function init() {
     clock = new THREE.Clock();
     scene = new THREE.Scene();
@@ -1455,7 +1526,7 @@ function generateWorld() {
         } else { // --- Office Floor Generation (i >= 0) ---
 
             // Floor Plane (Corridor only for office floors)
-            const floorGeo = new THREE.PlaneGeometry(SETTINGS.corridorWidth, totalCorridorLength);
+            const floorGeo = new THREE.PlaneGeometry(SETTINGS.corridorWidth + (2*SETTINGS.roomSize), totalCorridorLength);
             const floor = new THREE.Mesh(floorGeo, floorMaterial);
             floor.name = `Floor ${i}`;
             floor.rotation.x = -Math.PI / 2;
@@ -1562,7 +1633,7 @@ function generateWorld() {
                 // --- Right Side Room ---
                 const roomRXCenter = -SETTINGS.roomSize / 2;
                 const isRightRoomRedDoor = (j === redDoorIndex);
-                const rFloorGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, SETTINGS.corridorSegmentLength);
+                /* const rFloorGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, SETTINGS.corridorSegmentLength);
                 const rFloor = new THREE.Mesh(rFloorGeo, floorMaterial);
                 rFloor.position.set(roomRXCenter, floorY - floorDepth / 2, segmentCenterZ);
                 rFloor.receiveShadow = true; // scene.add(rFloor); worldObjects.push(rFloor); // Will be added to roomContents
@@ -1572,7 +1643,7 @@ function generateWorld() {
                 const rCeiling = new THREE.Mesh(rCeilingGeo, ceilingMaterial); // Use existing ceilingMaterial
                 rCeiling.position.set(roomRXCenter, floorY + SETTINGS.wallHeight + roomCeilingThickness / 2, segmentCenterZ);
                 rCeiling.castShadow = true; rCeiling.receiveShadow = true;
-                rFloor.name = `RoomFloor_R_F${i}_D${j}`;
+                rFloor.name = `RoomFloor_R_F${i}_D${j}`; */
                 
                 const deskRGeo = new THREE.BoxGeometry(deskDepth, deskHeight, deskWidth);
                 const deskR = new THREE.Mesh(deskRGeo, deskMaterial);
@@ -1601,8 +1672,8 @@ function generateWorld() {
                 const rightRoomContents = new THREE.Group();
                 const rightRoomId = `R_F${i}_D${j}`;
                 rightRoomContents.name = `RoomContents_${rightRoomId}`;
-                rightRoomContents.add(rFloor); worldObjects.push(rFloor); // Add to worldObjects for collision if needed
-                rightRoomContents.add(rCeiling); worldObjects.push(rCeiling);
+                //rightRoomContents.add(rFloor); worldObjects.push(rFloor); // Add to worldObjects for collision if needed
+                //rightRoomContents.add(rCeiling); worldObjects.push(rCeiling);
                 rightRoomContents.add(deskR); worldObjects.push(deskR);
                 rightRoomContents.add(cabinetR); worldObjects.push(cabinetR);
                 rightRoomContents.add(chairSeat_R); worldObjects.push(chairSeat_R);
@@ -1640,7 +1711,7 @@ function generateWorld() {
 
                 const roomBRXCenter = -SETTINGS.roomSize / 2;
                 const isRightBRoomRedDoor = (j === redDoorIndex);
-                const rFloorBGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, SETTINGS.corridorSegmentLength);
+                /* const rFloorBGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, SETTINGS.corridorSegmentLength);
                 const rFloorB = new THREE.Mesh(rFloorBGeo, floorMaterial);
                 rFloorB.position.set(roomBRXCenter, floorY - floorDepth / 2, segmentBCenterZ);
                 rFloorB.receiveShadow = true; // scene.add(rFloor); worldObjects.push(rFloor); // Will be added to roomContents
@@ -1650,7 +1721,7 @@ function generateWorld() {
                 const rCeilingB = new THREE.Mesh(rCeilingBGeo, ceilingMaterial); // Use existing ceilingMaterial
                 rCeilingB.position.set(roomRXCenter, floorY + SETTINGS.wallHeight + roomCeilingThickness / 2, segmentBCenterZ);
                 rCeilingB.castShadow = true; rCeilingB.receiveShadow = true;
-                rCeilingB.name = `RoomCeiling_B_R_F${i}_D${j}`;
+                rCeilingB.name = `RoomCeiling_B_R_F${i}_D${j}`; */
                 
                 const deskRBGeo = new THREE.BoxGeometry(deskDepth, deskHeight, deskWidth);
                 const deskRB = new THREE.Mesh(deskRBGeo, deskMaterial);
@@ -1679,8 +1750,8 @@ function generateWorld() {
                 //const rightRoomContents = new THREE.Group();
                 const rightRoomBId = `B_R_F${i}_D${j}`;
                 rightRoomContents.name = `RoomContents_B_${rightRoomBId}`;
-                rightRoomContents.add(rFloorB); worldObjects.push(rFloorB); // Add to worldObjects for collision if needed
-                rightRoomContents.add(rCeilingB); worldObjects.push(rCeilingB);
+                //rightRoomContents.add(rFloorB); worldObjects.push(rFloorB); // Add to worldObjects for collision if needed
+                //rightRoomContents.add(rCeilingB); worldObjects.push(rCeilingB);
                 rightRoomContents.add(deskRB); worldObjects.push(deskRB);
                 rightRoomContents.add(cabinetRB); worldObjects.push(cabinetRB);
                 rightRoomContents.add(chairBSeat_R); worldObjects.push(chairBSeat_R);
@@ -1715,7 +1786,7 @@ function generateWorld() {
                 // --- Left Side Room ---
                 const roomLXCenter = SETTINGS.corridorWidth + SETTINGS.roomSize / 2;
                 const isLeftRoomRedDoor = ((SETTINGS.doorsPerSide + j) === redDoorIndex);
-                const lFloorGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, SETTINGS.corridorSegmentLength);
+                /* const lFloorGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, SETTINGS.corridorSegmentLength);
                 const lFloor = new THREE.Mesh(lFloorGeo, floorMaterial);
                 lFloor.position.set(roomLXCenter, floorY - floorDepth / 2, segmentCenterZ);
                 lFloor.receiveShadow = true; // scene.add(lFloor); worldObjects.push(lFloor);
@@ -1725,7 +1796,7 @@ function generateWorld() {
                 const lCeiling = new THREE.Mesh(lCeilingGeo, ceilingMaterial);
                 lCeiling.position.set(roomRXCenter, floorY + SETTINGS.wallHeight + roomCeilingThickness / 2, segmentCenterZ);
                 lCeiling.castShadow = true; lCeiling.receiveShadow = true;
-                lFloor.name = `RoomFloor_L_F${i}_D${j}`;
+                lFloor.name = `RoomFloor_L_F${i}_D${j}`; */
                 
                 const deskLGeo = new THREE.BoxGeometry(deskDepth, deskHeight, deskWidth);
                 const deskL = new THREE.Mesh(deskLGeo, deskMaterial);
@@ -1752,8 +1823,8 @@ function generateWorld() {
                 const leftRoomContents = new THREE.Group();
                 const leftRoomId = `L_F${i}_D${j}`;
                 leftRoomContents.name = `RoomContents_${leftRoomId}`;
-                leftRoomContents.add(lFloor); worldObjects.push(lFloor);
-                leftRoomContents.add(lCeiling); worldObjects.push(lCeiling);
+                //leftRoomContents.add(lFloor); worldObjects.push(lFloor);
+                //leftRoomContents.add(lCeiling); worldObjects.push(lCeiling);
                 leftRoomContents.add(deskL); worldObjects.push(deskL);
                 leftRoomContents.add(cabinetL); worldObjects.push(cabinetL);
                 leftRoomContents.add(chairSeat_L); worldObjects.push(chairSeat_L);
@@ -1785,7 +1856,7 @@ function generateWorld() {
                                 // --- Left Side B Room ---
                                 const roomBLXCenter = SETTINGS.corridorWidth + SETTINGS.roomSize / 2;
                                 const isLeftBRoomRedDoor = ((SETTINGS.doorsPerSide + j) === redDoorIndex);
-                                const lFloorBGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, SETTINGS.corridorSegmentLength);
+                                /* const lFloorBGeo = new THREE.BoxGeometry(SETTINGS.roomSize, floorDepth, SETTINGS.corridorSegmentLength);
                                 const lFloorB = new THREE.Mesh(lFloorBGeo, floorMaterial);
                                 lFloorB.position.set(roomBLXCenter, floorY - floorDepth / 2, segmentBCenterZ);
                                 lFloorB.receiveShadow = true; // scene.add(lFloor); worldObjects.push(lFloor);
@@ -1795,7 +1866,7 @@ function generateWorld() {
                                 const lCeilingB = new THREE.Mesh(lCeilingBGeo, ceilingMaterial);
                                 lCeilingB.position.set(roomBLXCenter, floorY + SETTINGS.wallHeight + roomCeilingThickness / 2, segmentBCenterZ);
                                 lCeilingB.castShadow = true; lCeilingB.receiveShadow = true;
-                                lFloorB.name = `RoomFloor_B_L_F${i}_D${j}`;
+                                lFloorB.name = `RoomFloor_B_L_F${i}_D${j}`; */
                                 
                                 const deskLBGeo = new THREE.BoxGeometry(deskDepth, deskHeight, deskWidth);
                                 const deskBL = new THREE.Mesh(deskLBGeo, deskMaterial);
@@ -1822,8 +1893,8 @@ function generateWorld() {
                                 //const leftRoomContents = new THREE.Group();
                                 const leftRoomBId = `B_L_F${i}_D${j}`;
                                 leftRoomContents.name = `RoomContents_${leftRoomBId}`;
-                                leftRoomContents.add(lFloorB); worldObjects.push(lFloorB);
-                                leftRoomContents.add(lCeilingB); worldObjects.push(lCeilingB);
+                                //leftRoomContents.add(lFloorB); worldObjects.push(lFloorB);
+                                //leftRoomContents.add(lCeilingB); worldObjects.push(lCeilingB);
                                 leftRoomContents.add(deskBL); worldObjects.push(deskBL);
                                 leftRoomContents.add(cabinetBL); worldObjects.push(cabinetBL);
                                 leftRoomContents.add(chairSeat_BL); worldObjects.push(chairSeat_BL);
@@ -1854,7 +1925,7 @@ function generateWorld() {
             }
 
             // Corridor Ceiling Plane
-            const ceilingGeo = new THREE.PlaneGeometry(SETTINGS.corridorWidth, totalCorridorLength);
+            const ceilingGeo = new THREE.PlaneGeometry(SETTINGS.corridorWidth + (2*SETTINGS.roomSize), totalCorridorLength);
             const ceiling = new THREE.Mesh(ceilingGeo, ceilingMaterial);
             ceiling.rotation.x = Math.PI / 2;
             ceiling.position.set(SETTINGS.corridorWidth / 2, floorY + SETTINGS.wallHeight, totalCorridorLength / 2);
@@ -1863,7 +1934,7 @@ function generateWorld() {
             worldObjects.push(ceiling);
 
             // Corridor B Ceiling Plane
-            const ceilingBGeo = new THREE.PlaneGeometry(SETTINGS.corridorWidth, totalCorridorLength);
+            const ceilingBGeo = new THREE.PlaneGeometry(SETTINGS.corridorWidth + (2*SETTINGS.roomSize), totalCorridorLength);
             const ceilingB = new THREE.Mesh(ceilingBGeo, ceilingMaterial);
             ceilingB.rotation.x = Math.PI / 2;
             ceilingB.position.set(SETTINGS.corridorWidth / 2, floorY + SETTINGS.wallHeight, (totalCorridorLength / 2) - 16 - totalCorridorLength);
@@ -3016,8 +3087,8 @@ function createRoomLamp(x, y, z, floorIndex, roomId, baseBulbMaterial) {
     // Use global lampConeGeo and lampChainGeo
     // Materials for room lamps are specific due to animation
     const chainMaterial = new THREE.MeshStandardMaterial({ color: 0x111111 });
-    const chainMesh = new THREE.Mesh(lampChainGeo, chainMaterial);
-    chainMesh.position.y = 0.15;
+    const chainMesh = new THREE.Mesh(lampChainGeo, chainMaterial); // lampChainGeo height is 0.5
+    chainMesh.position.y = 0.25; // Position chain center so its top (0.25 + 0.5/2 = 0.5) aligns with lightGroup's origin being 0.5 from ceiling
 
     const lampshadeMaterial = new THREE.MeshStandardMaterial({
         color: 0x111111, // Darker lampshade for rooms, perhaps
@@ -3872,22 +3943,30 @@ function dropLampshade(lampshade) {
     scene.add(lampshade);
     lampshade.position.copy(worldPosition);
 
-    const gravity = -9.8;
-    const velocity = new THREE.Vector3(0, 0, 0);
+    if (!lampshade.geometry.boundingBox) { // Ensure bounding box exists for height calculation
+        lampshade.geometry.computeBoundingBox();
+    }
+    // Calculate lampshade height based on its local bounding box.
+    // This assumes the lampshade's origin is at its visual center.
+    const lampshadeHeight = lampshade.geometry.boundingBox.max.y - lampshade.geometry.boundingBox.min.y;
+
+    const fallAmountPerStep = 0.1; // Tunable: how much the lampshade moves down each interval.
+                                   // 0.1 units per 33ms step is approx. 3 units per second.
 
     const interval = setInterval(() => {
-        lampshade.position.y += velocity.y * 0.016;
-        velocity.y += gravity * 0.016;
+        lampshade.position.y -= fallAmountPerStep; // Move down by a fixed amount
 
         // Check for collision with floors or entities
-        const lampshadeBox = new THREE.Box3().setFromObject(lampshade);
+        const lampshadeBox = new THREE.Box3().setFromObject(lampshade); // Update bounding box after move
 
         // Check collision with player
-        const playerBox = new THREE.Box3().setFromCenterAndSize(
-            controls.getObject().position,
-            new THREE.Vector3(0.5, playerHeight, 0.5)
+        const playerCameraPos = controls.getObject().position;
+        // Approximate player's body center for collision
+        const playerBodyCenterY = playerCameraPos.y - playerHeight / 2;
+        const playerCollisionBox = new THREE.Box3().setFromCenterAndSize(
+            new THREE.Vector3(playerCameraPos.x, playerBodyCenterY, playerCameraPos.z),
+            new THREE.Vector3(0.5, playerHeight, 0.5) // Width, Height, Depth of player collision
         );
-
         if (lampshadeBox.intersectsBox(playerBox)) {
             applyDamageToPlayer(50); // 50% damage
             clearInterval(interval);
@@ -3895,22 +3974,65 @@ function dropLampshade(lampshade) {
             return;
         }
 
-        // Check collision with enemies (if implemented)
-        // Add similar logic for enemies here...
+        // Check collision with enemies
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            const enemy = enemies[i];
+            // Ensure enemy has geometry and it's loaded enough for a bounding box
+            if (!enemy.geometry || !enemy.geometry.boundingBox) {
+                continue;
+            }
+            const enemyBox = new THREE.Box3().setFromObject(enemy); // Use setFromObject for dynamic enemy poses
 
-        // Check collision with floors
-        for (const object of worldObjects) {
-            if (object.geometry.boundingBox) {
-                const objectBox = new THREE.Box3().copy(object.geometry.boundingBox).applyMatrix4(object.matrixWorld);
-                if (lampshadeBox.intersectsBox(objectBox)) {
-                    clearInterval(interval);
-                    //scene.remove(lampshade); // Remove lampshade after hitting the floor
-                    return;
+            if (lampshadeBox.intersectsBox(enemyBox)) {
+                console.log("Lampshade hit enemy:", enemy.name);
+                playerScore += 150; // Award points for lampshade kill
+                updateUI();
+
+                // Remove enemy
+                scene.remove(enemy);
+                const indexInWorldObjects = worldObjects.indexOf(enemy);
+                if (indexInWorldObjects > -1) {
+                    worldObjects.splice(indexInWorldObjects, 1);
                 }
+                enemies.splice(i, 1);
+
+                clearInterval(interval); // Stop lampshade falling
+                scene.remove(lampshade); // Remove lampshade after collision
+                return; // Exit early as lampshade is consumed
             }
         }
-    }, 16);
+
+        // Check collision with static world objects (floors, furniture)
+        for (const object of worldObjects) {
+            if (object === lampshade || object.userData.type === 'projectile' || !object.geometry || !object.geometry.boundingBox) {
+                continue; // Skip self, projectiles, or objects without required properties
+            }
+
+            // Assuming object.geometry.boundingBox is in local space. Apply world matrix.
+            const objectBox = new THREE.Box3().copy(object.geometry.boundingBox).applyMatrix4(object.matrixWorld);
+
+            if (lampshadeBox.intersectsBox(objectBox)) {
+                // Collision detected. Position lampshade so its bottom rests on top of the object.
+                // lampshade.position.y is the center of the lampshade.
+                // We want lampshade's bottom (center_y - height/2) to be objectBox.max.y
+                // So, new_center_y = objectBox.max.y + height/2
+                lampshade.position.y = objectBox.max.y + (lampshadeHeight / 2);
+                
+                // console.log(`Lampshade collided with ${object.name}. Landed at Y: ${lampshade.position.y.toFixed(2)} on object top Y: ${objectBox.max.y.toFixed(2)}`);
+                clearInterval(interval);
+                return; // Stop falling
+            }
+        }
+
+        // Fallback: If lampshade falls out of the world
+        if (lampshade.position.y < -50) { // Arbitrary "void" Y level, adjust as needed
+            clearInterval(interval);
+            scene.remove(lampshade);
+        }
+    }, 33); // Interval remains 33ms
 }
+
+
 
 function pickUpLampshade() {
     if (!controls.isLocked) return;
@@ -4506,6 +4628,17 @@ function animate() {
             }
         });
 
+        // --- FPS Counter ---
+        if (!window._fpsTimes) window._fpsTimes = [];
+        const now = performance.now();
+        window._fpsTimes.push(now);
+        // Only keep the last 1 second of frame times
+        while (window._fpsTimes.length > 2 && (now - window._fpsTimes[0]) > 1000) {
+            window._fpsTimes.shift();
+        }
+        const fps = (window._fpsTimes.length - 1) / ((window._fpsTimes[window._fpsTimes.length - 1] - window._fpsTimes[0]) / 1000);
+        const fpsText = `FPS: ${fps.toFixed(1)}`;
+
         // --- Debug Overlay Update ---
         const playerPos = controls.getObject().position;
         document.getElementById('playerCoords').innerText = `Player: (x: ${playerPos.x.toFixed(2)}, y: ${playerPos.y.toFixed(2)}, z: ${playerPos.z.toFixed(2)})`;
@@ -4664,7 +4797,17 @@ function animate() {
         // Update the output (adjust element IDs as needed)
         document.getElementById('playerCoords').innerText = `Player: (${controls.getObject().position.x.toFixed(2)}, ${controls.getObject().position.y.toFixed(2)}, ${controls.getObject().position.z.toFixed(2)}) | Colliding with: ${collisionInfo}`;
         document.getElementById('pointedObject').innerText = pointedObjectInfo + ` | Colliding with: ${collisionInfo}`;
+        const playerCoordsElem = document.getElementById('playerCoords');
+        if (playerCoordsElem) {
+            playerCoordsElem.innerText += ` | ${fpsText}`;
+        }
         // --- End Debug Overlay Update ---
+
+        // Add this line to update the FPS counter in a dedicated element
+        const fpsElem = document.getElementById('fpsCounter');
+        if (fpsElem) {
+            fpsElem.innerText = fpsText;
+        }
         
         // --- Find object directly beneath the player using a downward ray ---
         const maxDistance = 2; // Adjust as needed
