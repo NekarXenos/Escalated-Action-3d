@@ -30,14 +30,22 @@ export function createEscalatorsForFloor(config) {
         escalatorEnds, escalatorEndsB,
         createStandardLampFn // Passed createStandardLamp function
     } = config;
-
+    
+    // NEW: Initialize balustrade templates here so that 'materials' is defined.
+    if (!aWingBalustradeTemplate) {
+        aWingBalustradeTemplate = createBalustradeTemplate(1.7, 0.1, 10, materials.balustradeMaterial);
+    }
+    if (!bWingBalustradeTemplate) {
+        bWingBalustradeTemplate = createBalustradeTemplate(1.7, 0.1, 10, materials.balustradeMaterial);
+    }
+    
     const floorY = floorIndex * settings.floorHeight;
     const floorDepth = settings.floorHeight - settings.wallHeight; // Calculate floorDepth here
     const escalatorLength = settings.escalatorLength;
     const escalatorWidth = settings.escalatorWidth;
-
-    const CentreX = settings.corridorWidth / 2;
-    const CentreZ = - 4 - elevatorSize;
+    // const corridorWidth = settings.corridorWidth; // Not needed here if using settings.corridorWidth directly
+    // const CentreX = settings.corridorWidth / 2; // Unused
+    // const CentreZ = - 4 - settings.elevatorSize; // Unused
     const NegativeZ = -16;
 
     // Escalator Area Floor Slabs & Lights (conditionally generated)
@@ -165,26 +173,32 @@ export function createEscalatorsForFloor(config) {
             scene.add(startEscDown);
             worldObjects.push(startEscDown);
             escalatorStarts.down[floorIndex] = startEscDown;
-            escalatorSteps.down[floorIndex] = [];
 
-            // --- Steps DOWN (LEFT side) ---
+            // --- Replace individual step meshes with instanced steps ---
+            // Remove: escalatorSteps.down[floorIndex] = [];
+            // Remove individual loop below and create an InstancedMesh
+            const stepGeo = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
+            const instancedSteps = new THREE.InstancedMesh(stepGeo, materials.escalatorMaterial, stepCount);
+            instancedSteps.castShadow = true;
+            instancedSteps.receiveShadow = true;
             for (let s = 0; s < stepCount; s++) {
-                const y = floorY - .01 - (s + 1) * stepHeight + stepHeight / 2;
+                const y = floorY - 0.01 - (s + 1) * stepHeight + stepHeight / 2;
                 const z = totalCorridorLength + 4.3 + (s / stepCount) * settings.escalatorLength;
-                const stepGeo = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
-                const stepDown = new THREE.Mesh(stepGeo, materials.escalatorMaterial);
-                stepDown.position.set(
+                const pos = new THREE.Vector3(
                     settings.corridorWidth + (stepWidth / 2) + 0.1,
                     y,
                     z
                 );
-                stepDown.castShadow = true;
-                stepDown.receiveShadow = true;
-                stepDown.name = `Left Escalator Step Down ${floorIndex}-${s}`;
-                scene.add(stepDown);
-                worldObjects.push(stepDown);
-                escalatorSteps.down[floorIndex].push(stepDown);
+                const matrix = new THREE.Matrix4();
+                matrix.setPosition(pos);
+                instancedSteps.setMatrixAt(s, matrix);
+                // Optionally: set per-instance color or other attributes here for numbering/material changes
             }
+            instancedSteps.instanceMatrix.needsUpdate = true;
+            scene.add(instancedSteps);
+            worldObjects.push(instancedSteps);
+            escalatorSteps.down[floorIndex] = instancedSteps;
+            // --- End of instanced steps creation ---
 
             const endEscDownGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             const endEscDown = new THREE.Mesh(endEscDownGeo, materials.escalatorMaterial);
@@ -302,7 +316,7 @@ export function createEscalatorsForFloor(config) {
             const startEscUpB = new THREE.Mesh(startEscUpGeoB, materials.escalatorEmbarkMaterial);
             startEscUpB.name = `Left B Escalator Up Start ${floorIndex}`;
             startEscUpB.position.set(
-                corridorWidth +0.1 + (escalatorWidth / 2),// was -0.1 - (escalatorWidth / 2),
+                settings.corridorWidth +0.1 + (escalatorWidth / 2),// was -0.1 - (escalatorWidth / 2),
                 floorY - settings.floorHeight - (floorDepth / 2),
                 NegativeZ - totalCorridorLength - escalatorLength - 4 - 0.5// was totalCorridorLength + escalatorLength + 4 + 0.5
             );
@@ -319,7 +333,7 @@ export function createEscalatorsForFloor(config) {
                 const stepGeoB = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
                 const stepUpB = new THREE.Mesh(stepGeoB, materials.escalatorMaterial);
                 stepUpB.position.set(
-                    corridorWidth + 0.1 + (stepWidth / 2),// was  -0.1 - (stepWidth / 2),
+                    settings.corridorWidth + 0.1 + (stepWidth / 2),// was  -0.1 - (stepWidth / 2),
                     y,
                     z
                 );
@@ -335,7 +349,7 @@ export function createEscalatorsForFloor(config) {
             const endEscUpB = new THREE.Mesh(endEscUpGeoB, materials.escalatorMaterial);
             endEscUpB.name = `Left B Escalator Up End ${floorIndex}`;
             endEscUpB.position.set(
-                corridorWidth + 0.1 + (escalatorWidth / 2),// was -0.1 - (escalatorWidth / 2),
+                settings.corridorWidth + 0.1 + (escalatorWidth / 2),// was -0.1 - (escalatorWidth / 2),
                 floorY - (floorDepth / 3) - 0.08,
                 NegativeZ - totalCorridorLength - 3.5// was totalCorridorLength + 3.5
             );
@@ -541,16 +555,19 @@ export function createEscalatorsForFloor(config) {
 
 // The escalator-related functions are now separated into this module for reusability.
 
-export function updateEscalatorStepVisuals(playerWorldPos, playerHeight, playerOnEscalatorState, escalatorSteps, escalatorStarts, materials) {
+export function updateEscalatorStepVisuals(playerWorldPos, playerHeight, playerOnEscalatorState, escalatorSteps, escalatorStarts, escalatorStepsB, escalatorStartsB, materials) {
     let escalatorFound = false;
     let escalatorType = null;
     let escalatorFloor = null;
+    let escalatorWing = null;
 
+    // Check A-Wing
     for (const [floor, mesh] of Object.entries(escalatorStarts.up)) {
         if (isPlayerOnMesh(playerWorldPos, playerHeight, mesh)) {
             escalatorFound = true;
             escalatorType = 'up';
             escalatorFloor = parseInt(floor);
+            escalatorWing = 'A';
             break;
         }
     }
@@ -560,26 +577,62 @@ export function updateEscalatorStepVisuals(playerWorldPos, playerHeight, playerO
                 escalatorFound = true;
                 escalatorType = 'down';
                 escalatorFloor = parseInt(floor);
+                escalatorWing = 'A';
+                break;
+            }
+        }
+    }
+    // Check B-Wing
+    if (!escalatorFound) {
+        for (const [floor, mesh] of Object.entries(escalatorStartsB.up)) {
+            if (isPlayerOnMesh(playerWorldPos, playerHeight, mesh)) {
+                escalatorFound = true;
+                escalatorType = 'up';
+                escalatorFloor = parseInt(floor);
+                escalatorWing = 'B';
+                break;
+            }
+        }
+    }
+    if (!escalatorFound) {
+        for (const [floor, mesh] of Object.entries(escalatorStartsB.down)) {
+            if (isPlayerOnMesh(playerWorldPos, playerHeight, mesh)) {
+                escalatorFound = true;
+                escalatorType = 'down';
+                escalatorFloor = parseInt(floor);
+                escalatorWing = 'B';
                 break;
             }
         }
     }
 
-    if (playerOnEscalatorState.type !== escalatorType || playerOnEscalatorState.floor !== escalatorFloor) {
-        for (const steps of Object.values(escalatorSteps.up)) {
-            steps.forEach(step => { step.material = materials.escalatorMaterial; });
-        }
-        for (const steps of Object.values(escalatorSteps.down)) {
-            steps.forEach(step => { step.material = materials.escalatorMaterial; });
-        }
+    // Only update if state changed
+    if (
+        playerOnEscalatorState.type !== escalatorType ||
+        playerOnEscalatorState.floor !== escalatorFloor ||
+        playerOnEscalatorState.wing !== escalatorWing
+    ) {
+        // Reset all step materials
+        for (const steps of Object.values(escalatorSteps.up))   { steps.forEach(step => { step.material = materials.escalatorMaterial; }); }
+        for (const steps of Object.values(escalatorSteps.down)) { steps.forEach(step => { step.material = materials.escalatorMaterial; }); }
+        for (const steps of Object.values(escalatorStepsB.up))  { steps.forEach(step => { step.material = materials.escalatorMaterial; }); }
+        for (const steps of Object.values(escalatorStepsB.down)){ steps.forEach(step => { step.material = materials.escalatorMaterial; }); }
 
-        if (escalatorFound && escalatorType && escalatorFloor !== null && escalatorSteps[escalatorType] && escalatorSteps[escalatorType][escalatorFloor]) {
-            escalatorSteps[escalatorType][escalatorFloor].forEach(step => {
-                step.material = materials.escalatorEmbarkMaterial;
-            });
+        // Set the correct material for the escalator the player is on
+        if (escalatorFound && escalatorType && escalatorFloor !== null && escalatorWing) {
+            if (escalatorWing === 'A' && escalatorSteps[escalatorType] && escalatorSteps[escalatorType][escalatorFloor]) {
+                escalatorSteps[escalatorType][escalatorFloor].forEach(step => {
+                    step.material = materials.escalatorEmbarkMaterial;
+                });
+            } else if (escalatorWing === 'B' && escalatorStepsB[escalatorType] && escalatorStepsB[escalatorType][escalatorFloor]) {
+                escalatorStepsB[escalatorType][escalatorFloor].forEach(step => {
+                    step.material = materials.escalatorEmbarkMaterialB;
+                });
+            }
         }
         playerOnEscalatorState.type = escalatorType;
         playerOnEscalatorState.floor = escalatorFloor;
+        playerOnEscalatorState.wing = escalatorWing;
     }
 }
 
@@ -590,10 +643,10 @@ export function calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorS
     const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 2);
 
     let allSteps = [];
-    // Wing A steps
+    // Consolidate all steps for raycasting
     for (const key in escalatorSteps.up) { allSteps = allSteps.concat(escalatorSteps.up[key]); }
     for (const key in escalatorSteps.down) { allSteps = allSteps.concat(escalatorSteps.down[key]); }
-    // Wing B steps
+
     for (const key in escalatorStepsB.up) { allSteps = allSteps.concat(escalatorStepsB.up[key]); }
     for (const key in escalatorStepsB.down) { allSteps = allSteps.concat(escalatorStepsB.down[key]); }
 
@@ -603,7 +656,7 @@ export function calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorS
         const hitStep = intersections[0].object;
         let foundType = null;
         let foundFloor = null;
-        let wing = 'A'; // Default to Wing A
+        let wing = null; 
 
         // Check Wing A steps
         for (const floor in escalatorSteps.up) {
@@ -667,7 +720,12 @@ export function calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorS
                         cameraObject.position.y += 0.21;
 
                         // Signal disembark
-                        return { disembarkedDown: true, boost: new THREE.Vector3(0,0,0) };
+                        return { 
+                            disembarkedDown: true, 
+                            boost: new THREE.Vector3(0,0,0), 
+                            onEscalator: false, // No longer on escalator steps
+                            wing: null, type: null, floor: null 
+                        };
                     }
                 }
 
@@ -686,12 +744,25 @@ export function calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorS
                         // Jumping is still possible as playerVelocity.y is handled in main loop.
                     }
                 }
-                return { disembarkedDown: false, boost: new THREE.Vector3(0,0,0) }; // Return zero boost as movement is direct
+                // Player is on an active step
+                return { 
+                    disembarkedDown: false, 
+                    boost: new THREE.Vector3(0,0,0), 
+                    onEscalator: true,
+                    wing: wing,
+                    type: foundType,
+                    floor: parseInt(foundFloor)
+                };
             }
         }
     }
     // Player is not on any escalator step
-    return { disembarkedDown: false, boost: new THREE.Vector3(0,0,0) };
+    return { 
+        disembarkedDown: false, 
+        boost: new THREE.Vector3(0,0,0), 
+        onEscalator: false,
+        wing: null, type: null, floor: null
+    };
 }
 
 export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalatorStepsB, escalatorStarts, escalatorStartsB, escalatorEnds, escalatorEndsB, settings, materials) {
@@ -708,7 +779,7 @@ export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalator
 
             steps.forEach(step => {
                 if (step.material === materials.escalatorEmbarkMaterial) {
-                    step.position.addScaledVector(dir, escSpeed * deltaTime);
+                    step.position.addScaledVector(dir, escSpeed * deltaTime); // A-Wing Down
                     if (step.position.distanceTo(startMesh.position) >= totalDistance) {
                         step.position.copy(startMesh.position);
                     }
@@ -728,7 +799,7 @@ export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalator
 
             steps.forEach(step => {
                 if (step.material === materials.escalatorEmbarkMaterial) {
-                    step.position.addScaledVector(dirUp, escSpeed * deltaTime);
+                    step.position.addScaledVector(dirUp, escSpeed * deltaTime); // A-Wing Up
                     if (step.position.distanceTo(startMesh.position) >= totalDistanceUp) {
                         step.position.copy(startMesh.position);
                     }
@@ -743,14 +814,13 @@ export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalator
         const startMesh = escalatorStartsB.down[floor];
         const endMesh = escalatorEndsB.down[floor];
         if (startMesh && endMesh && steps) {
-            const dir = new THREE.Vector3().subVectors(endMesh.position, startMesh.position);
-            const totalDistance = dir.length();
-            dir.normalize();
-
+            const dirDown = new THREE.Vector3().subVectors(startMesh.position, endMesh.position);
+            const totalDistanceDown = dirDown.length();
+            dirDown.normalize();
             steps.forEach(step => {
-                if (step.material === materials.escalatorEmbarkMaterial) {
-                    step.position.addScaledVector(dir, escSpeed * deltaTime);
-                    if (step.position.distanceTo(startMesh.position) >= totalDistance) {
+                if (step.material === materials.escalatorEmbarkMaterialB) {
+                    step.position.addScaledVector(dirDown, settings.escalatorSpeed * deltaTime);
+                    if (step.position.distanceTo(startMesh.position) >= totalDistanceDown) {
                         step.position.copy(startMesh.position);
                     }
                 }
@@ -768,8 +838,8 @@ export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalator
             dirUp.normalize();
 
             steps.forEach(step => {
-                if (step.material === materials.escalatorEmbarkMaterial) {
-                    step.position.addScaledVector(dirUp, escSpeed * deltaTime);
+                if (step.material === materials.escalatorEmbarkMaterialB) { // Check B-wing material (dark orange)
+                    step.position.addScaledVector(dirUp, settings.escalatorSpeed * deltaTime);
                     if (step.position.distanceTo(startMesh.position) >= totalDistanceUp) {
                         step.position.copy(startMesh.position);
                     }
@@ -777,4 +847,22 @@ export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalator
             });
         }
     }
+}
+
+// NEW: Add global templates and a helper to create a balustrade pair.
+let aWingBalustradeTemplate = null;
+let bWingBalustradeTemplate = null;
+
+function createBalustradeTemplate(balustradeHeight, balustradeThickness, length, material) {
+	// Creates a group with an inner and an outer balustrade of the given dimensions.
+	const group = new THREE.Group();
+	const innerGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, length);
+	const outerGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, length);
+	const innerMesh = new THREE.Mesh(innerGeo, material);
+	innerMesh.name = 'InnerBalustrade';
+	const outerMesh = new THREE.Mesh(outerGeo, material);
+	outerMesh.name = 'OuterBalustrade';
+	group.add(innerMesh);
+	group.add(outerMesh);
+	return group;
 }
