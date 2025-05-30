@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
-import { calculateEscalatorBoost, animateActiveEscalatorSteps } from './escalatorTMPd.js';
+import { calculateEscalatorBoost, animateActiveEscalatorSteps, updateEscalatorStepVisuals } from './escalator.js';
 
 // IMPORTANT: Left is +X and Right is -X in this world
 // Up is +Y and Down is -Y in this world
@@ -42,6 +42,7 @@ let moveForward = false, moveBackward = false, moveLeft = false, moveRight = fal
 let playerHeight = 1.7; // Camera height offset
 let isCrouching = false; // New crouch state
 let playerState = 'upright'; // Possible states: 'upright', 'crouching', 'prone'
+let isWireframeView = false; // For wireframe debug view
 
 // let elevator, elevatorTargetY = 0, isElevatorMoving = false, elevatorDirection = 0; // Old single elevator state
 // let currentFloorIndex = 0; // Old single elevator state
@@ -119,6 +120,11 @@ const lampLampshadeMaterial = new THREE.MeshStandardMaterial({ color: 0x000000, 
 // This material is for the glowing disk of corridor/area lamps, which is statically emissive.
 const lampCorridorDiskMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa77, emissive: 0xffaa77, emissiveIntensity: 1 });
 // lightBulbMaterial (for the bulb itself) will be passed in, as it's already globally defined in generateWorld.
+
+// --- Window Constants ---
+const WINDOW_WIDTH_RATIO = 0.7;
+const WINDOW_HEIGHT_RATIO = 0.6;
+const WINDOW_SILL_RATIO = 0.2; // of wallHeight
 
 
 // --- Initialization ---
@@ -212,7 +218,7 @@ function init() {
     renderer.shadowMap.enabled = true;
 
     // Lighting
-    const ambientLight = new THREE.AmbientLight(0x015599, 0.1); // Dim bluish ambient light
+    const ambientLight = new THREE.AmbientLight(0x115599, 0.1); // Dim bluish ambient light
     scene.add(ambientLight);
 
     const moonlight = new THREE.DirectionalLight(0x015599, 0.3); // Soft bluish moonlight
@@ -568,6 +574,9 @@ function generateWorld() {
 
     const floorMaterial = new THREE.MeshStandardMaterial({ color: 0xaaaaaa,  side: THREE.DoubleSide });
     const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xbbbbbb }); // Slightly different for testing
+    const wallMaterialA = new THREE.MeshStandardMaterial({ color: 0xb0c4c4 }); // Teal tint for A-wing (+Z)
+    const wallMaterialB = new THREE.MeshStandardMaterial({ color: 0xc4b8b0 }); // Red-orange tint for B-wing (-Z)
+    const whiteMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.8, roughness: 0.5 });
     const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc });
     // Make blackDoorMaterial accessible globally or pass it around if needed for interact()
     const textMaterial = new THREE.MeshStandardMaterial({ color: 0xcc9911, metalness: 0.8, roughness: 0.5 });
@@ -576,6 +585,10 @@ function generateWorld() {
 
     const blackDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.3 });
     const redDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x121111, roughness: 0.3, emissive: 0x010000, emissiveIntensity: 0.01 }); // Added emissive property
+    // Add new B-Wing door material: dark navy blue
+    const blueElevatorMaterial = new THREE.MeshStandardMaterial({ color: 0x1111aa, metalness: 0.8, roughness: 0.5 });
+    const orangyYellowElevatorMaterial = new THREE.MeshStandardMaterial({ color: 0xFFA500, metalness: 0.7, roughness: 0.4 }); // Orangy Yellow
+    const navyDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x002030, roughness: 0.3 });
     const elevatorMaterial = new THREE.MeshStandardMaterial({ color: 0xaa1111,   metalness: 0.8, roughness: 0.5  });
     const lightBulbMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFEE, emissive: 0xFFFFDD, emissiveIntensity: 1 }); // Glowing bulb
     // --- Furniture Materials ---
@@ -594,10 +607,12 @@ function generateWorld() {
     const basementWallMaterial = new THREE.MeshStandardMaterial({ color: 0x656565, roughness: 0.8 });
     const EscalatorEmbarkMaterial = new THREE.MeshStandardMaterial({ color: 0x332222,  metalness: 0.8, roughness: 0.5, emissive: 0x110000, emissiveIntensity: 0.1 }); // Added emissive property
     const garageDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x909090, metalness: 0.6, roughness: 0.5 });
+    const EscalatorEmbarkMaterialB = new THREE.MeshStandardMaterial({ color: 0xDD8800,  metalness: 0.8, roughness: 0.5, emissive: 0x442200, emissiveIntensity: 0.1 }); // Dark Orange for B-Wing
 
     // Store references globally for use in updatePlayer
     window.EscalatorMaterial = EscalatorMaterial;
     window.EscalatorEmbarkMaterial = EscalatorEmbarkMaterial;
+    window.EscalatorEmbarkMaterialB = EscalatorEmbarkMaterialB; // Make B-Wing material global
     // Store blackDoorMaterial globally for use in interact()
     const glassMaterial = new THREE.MeshPhysicalMaterial({
         color: 0xadc5d4, // A light blueish grey
@@ -644,7 +659,7 @@ function generateWorld() {
         shaftDepth: SETTINGS.elevatorSize,      // Depth of the shaft
         minFloorIndex: 0, // -SETTINGS.numBasementFloors,
         maxFloorIndex: SETTINGS.numFloors, // Roof access is effectively maxFloorIndex + 1
-        startFloorIndex: 0, // Initial floor
+        startFloorIndex: SETTINGS.numFloors, // Start on the roof level
         platformMaterial: elevatorMaterial,
         shaftMaterial: concreteMaterial, // Material for shaft ceiling and pit
         scene: scene,
@@ -681,7 +696,7 @@ function generateWorld() {
         minFloorIndex:  -SETTINGS.numBasementFloors, //currentElevatorConfig.minFloorIndex,
         maxFloorIndex: 0, // SETTINGS.numFloors-1, // //currentElevatorConfig.maxFloorIndex,
         startFloorIndex: 0, // Start at ground floor
-        platformMaterial: elevatorMaterial, //  new THREE.MeshStandardMaterial({ color: 0x1111aa, metalness: 0.8, roughness: 0.5  }), // Blue color
+        platformMaterial: orangyYellowElevatorMaterial, 
         shaftMaterial: concreteMaterial,
         scene: scene,
         worldObjectsRef: worldObjects
@@ -698,7 +713,7 @@ function generateWorld() {
         minFloorIndex:  0, // -SETTINGS.numBasementFloors, //currentElevatorConfig.minFloorIndex,
         maxFloorIndex:  SETTINGS.numFloors-1, // //currentElevatorConfig.maxFloorIndex,
         startFloorIndex: 0, // Start at ground floor
-        platformMaterial:  elevatorMaterial, // new THREE.MeshStandardMaterial({ color: 0x1111aa, metalness: 0.8, roughness: 0.5  }), // Blue color
+        platformMaterial:  blueElevatorMaterial,
         shaftMaterial: concreteMaterial,
         scene: scene,
         worldObjectsRef: worldObjects
@@ -715,7 +730,7 @@ function generateWorld() {
         minFloorIndex:  0, // -SETTINGS.numBasementFloors, //currentElevatorConfig.minFloorIndex,
         maxFloorIndex: 2, //  SETTINGS.numFloors-1, // //currentElevatorConfig.maxFloorIndex,
         startFloorIndex: 0, // Start at ground floor
-        platformMaterial: elevatorMaterial, //  new THREE.MeshStandardMaterial({ color: 0x1111aa, metalness: 0.8, roughness: 0.5  }), // Blue color
+        platformMaterial: blueElevatorMaterial,
         shaftMaterial: concreteMaterial,
         scene: scene,
         worldObjectsRef: worldObjects
@@ -733,7 +748,7 @@ function generateWorld() {
         minFloorIndex: 0, // -SETTINGS.numBasementFloors, //currentElevatorConfig.minFloorIndex,
         maxFloorIndex:  2, //  SETTINGS.numFloors-1, // //currentElevatorConfig.maxFloorIndex,
         startFloorIndex: 0, // Start at ground floor
-        platformMaterial: elevatorMaterial, // new THREE.MeshStandardMaterial({ color: 0x1111aa, metalness: 0.8, roughness: 0.5  }), // Blue color
+        platformMaterial: blueElevatorMaterial,
         shaftMaterial: concreteMaterial,
         scene: scene,
         worldObjectsRef: worldObjects
@@ -941,11 +956,11 @@ function generateWorld() {
 
     
     // Roof Plane
-    const roofGeo = new THREE.BoxGeometry(buildingWidth, floorDepth, 4 + totalCorridorLength + escalatorLength + 8);
+    const roofGeo = new THREE.BoxGeometry(buildingWidth, floorDepth/2, 4 + totalCorridorLength + escalatorLength + 8);
     const roof = new THREE.Mesh(roofGeo, floorMaterial);
     roof.name = `Roof`;
     // roof.position.set(SETTINGS.corridorWidth / 2, (SETTINGS.numFloors) * SETTINGS.floorHeight - floorDepth/2, 2 + ((totalCorridorLength + escalatorLength) / 2)); // Old
-    roof.position.set(SETTINGS.corridorWidth / 2, (SETTINGS.numFloors) * SETTINGS.floorHeight - floorDepth/2, 2 + ((totalCorridorLength + escalatorLength) / 2));
+    roof.position.set(SETTINGS.corridorWidth / 2, (SETTINGS.numFloors) * SETTINGS.floorHeight - floorDepth/4, 2 + ((totalCorridorLength + escalatorLength) / 2));
     roof.receiveShadow = true;
     scene.add(roof);
     worldObjects.push(roof);
@@ -1592,28 +1607,28 @@ function generateWorld() {
             for (let k = 0; k <= SETTINGS.doorsPerSide; k++) {
                 const zPosBoundary = k * SETTINGS.corridorSegmentLength;
                 const partRGeo = new THREE.BoxGeometry(SETTINGS.roomSize+(wallDepth*0.8), SETTINGS.wallHeight, wallDepth);
-                const partR = new THREE.Mesh(partRGeo, wallMaterial);
+                const partR = new THREE.Mesh(partRGeo, wallMaterialA); // A-wing
                 partR.position.set(-SETTINGS.roomSize / 2, floorY + SETTINGS.wallHeight / 2, zPosBoundary);
                 partR.castShadow = true; partR.receiveShadow = true; scene.add(partR); worldObjects.push(partR);
                 partR.name = `RoomPartition_R_F${i}_Z${k}`;
 
                 // A-Wing Left partition wall
                 const partLGeo = new THREE.BoxGeometry(SETTINGS.roomSize +(wallDepth*0.8), SETTINGS.wallHeight, wallDepth);
-                const partL = new THREE.Mesh(partLGeo, wallMaterial);
+                const partL = new THREE.Mesh(partLGeo, wallMaterialA); // A-wing
                 partL.position.set(SETTINGS.corridorWidth + SETTINGS.roomSize / 2, floorY + SETTINGS.wallHeight / 2, zPosBoundary);
                 partL.castShadow = true; partL.receiveShadow = true; scene.add(partL); worldObjects.push(partL);
                 partL.name = `RoomPartition_L_F${i}_Z${k}`;
                 
                 // B-Wing Right partition wall
                 const partRBGeo = new THREE.BoxGeometry(SETTINGS.roomSize+(wallDepth*0.8), SETTINGS.wallHeight, wallDepth);
-                const partRB = new THREE.Mesh(partRBGeo, wallMaterial);
+                const partRB = new THREE.Mesh(partRBGeo, wallMaterialB); // B-wing
                 partRB.position.set(-SETTINGS.roomSize / 2, floorY + SETTINGS.wallHeight / 2, zPosBoundary - 16 - totalCorridorLength);
                 partRB.castShadow = true; partRB.receiveShadow = true; scene.add(partRB); worldObjects.push(partRB);
                 partRB.name = `RoomPartition_B_R_F${i}_Z${k}`;
 
                 // B-Wing Left partition wall
                 const partLBGeo = new THREE.BoxGeometry(SETTINGS.roomSize +(wallDepth*0.8), SETTINGS.wallHeight, wallDepth);
-                const partLB = new THREE.Mesh(partLBGeo, wallMaterial);
+                const partLB = new THREE.Mesh(partLBGeo, wallMaterialB); // B-wing
                 partLB.position.set(SETTINGS.corridorWidth + SETTINGS.roomSize / 2, floorY + SETTINGS.wallHeight / 2, zPosBoundary - 16 - totalCorridorLength);
                 partLB.castShadow = true; partLB.receiveShadow = true; scene.add(partLB); worldObjects.push(partLB);
                 partLB.name = `RoomPartition_B_L_F${i}_Z${k}`; 
@@ -1694,10 +1709,12 @@ function generateWorld() {
                 const roomLampR = createRoomLamp(roomRXCenter, floorY + SETTINGS.wallHeight - 0.5, segmentCenterZ, i, rightRoomId, lightBulbMaterial);
                 rightRoomContents.add(roomLampR); // Add lamp's visual group
 
-                createOuterWallWithWindow(-SETTINGS.roomSize + wallDepth / 2, floorY + SETTINGS.wallHeight / 2, segmentCenterZ, SETTINGS.corridorSegmentLength, SETTINGS.wallHeight, wallDepth, wallMaterial, opaqueGlassMaterial, glassMaterial, rightRoomId);
+                // Call modified function for pillars and window
+                createOuterWall_SegmentFeatures(-SETTINGS.roomSize + wallDepth / 2, segmentCenterZ, SETTINGS.corridorSegmentLength, floorY, SETTINGS.wallHeight, wallDepth, wallMaterialA, opaqueGlassMaterial, glassMaterial, rightRoomId);
 
                 rightRoomContents.visible = false;
                 scene.add(rightRoomContents);
+
 
                 /* allRoomsData.push({
                     id: rightRoomId,
@@ -1772,7 +1789,8 @@ function generateWorld() {
                 const roomLampBR = createRoomLamp(roomRXCenter, floorY + SETTINGS.wallHeight - 0.5, segmentBCenterZ, i, rightRoomBId, lightBulbMaterial);
                 rightRoomContents.add(roomLampBR); // Add lamp's visual group
 
-                createOuterWallWithWindow(-SETTINGS.roomSize + wallDepth / 2, floorY + SETTINGS.wallHeight / 2, segmentBCenterZ, SETTINGS.corridorSegmentLength, SETTINGS.wallHeight, wallDepth, wallMaterial, opaqueGlassMaterial, glassMaterial, rightRoomBId);
+                // Call modified function for pillars and window (B-Wing Right)
+                createOuterWall_SegmentFeatures(-SETTINGS.roomSize + wallDepth / 2, segmentBCenterZ, SETTINGS.corridorSegmentLength, floorY, SETTINGS.wallHeight, wallDepth, wallMaterialB, opaqueGlassMaterial, glassMaterial, rightRoomBId);
 
                 rightRoomContents.visible = false;
                 scene.add(rightRoomContents);
@@ -1845,14 +1863,15 @@ function generateWorld() {
                 const roomLampL = createRoomLamp(roomLXCenter, floorY + SETTINGS.wallHeight - 0.5, segmentCenterZ, i, leftRoomId, lightBulbMaterial);
                 leftRoomContents.add(roomLampL);
 
-                createOuterWallWithWindow(SETTINGS.corridorWidth + SETTINGS.roomSize - wallDepth / 2, floorY + SETTINGS.wallHeight / 2, segmentCenterZ, SETTINGS.corridorSegmentLength, SETTINGS.wallHeight, wallDepth, wallMaterial, opaqueGlassMaterial, glassMaterial, leftRoomId);
+                // Call modified function for pillars and window (A-Wing Left)
+                createOuterWall_SegmentFeatures(SETTINGS.corridorWidth + SETTINGS.roomSize - wallDepth / 2, segmentCenterZ, SETTINGS.corridorSegmentLength, floorY, SETTINGS.wallHeight, wallDepth, wallMaterialA, opaqueGlassMaterial, glassMaterial, leftRoomId);
+
                                 leftRoomContents.visible = false;
                                 scene.add(leftRoomContents);
                                 /* allRoomsData.push({ // Ensure new properties are initialized
                                     id: leftRoomId, door: null, windowGlass: null, opaqueMaterial: null, transparentMaterial: null, contentsGroup: leftRoomContents,
                                     visibleByDoor: false, visibleByWindow: false, lamp: roomLampL
                                 }); */
-                
                                 // --- Left Side B Room ---
                                 const roomBLXCenter = SETTINGS.corridorWidth + SETTINGS.roomSize / 2;
                                 const isLeftBRoomRedDoor = ((SETTINGS.doorsPerSide + j) === redDoorIndex);
@@ -1915,13 +1934,67 @@ function generateWorld() {
                                 const roomLampBL = createRoomLamp(roomBLXCenter, floorY + SETTINGS.wallHeight - 0.5, segmentBCenterZ, i, leftRoomBId, lightBulbMaterial);
                                 leftRoomContents.add(roomLampBL);
                 
-                                createOuterWallWithWindow(SETTINGS.corridorWidth + SETTINGS.roomSize - wallDepth / 2, floorY + SETTINGS.wallHeight / 2, segmentBCenterZ, SETTINGS.corridorSegmentLength, SETTINGS.wallHeight, wallDepth, wallMaterial, opaqueGlassMaterial, glassMaterial, leftRoomBId);
+                                // Call modified function for pillars and window (B-Wing Left)
+                                createOuterWall_SegmentFeatures(SETTINGS.corridorWidth + SETTINGS.roomSize - wallDepth / 2, segmentBCenterZ, SETTINGS.corridorSegmentLength, floorY, SETTINGS.wallHeight, wallDepth, wallMaterialB, opaqueGlassMaterial, glassMaterial, leftRoomBId);
+
                                 leftRoomContents.visible = false;
                                 scene.add(leftRoomContents);
                                 allRoomsData.push({ // Ensure new properties are initialized
                                     id: leftRoomId, door: null, windowGlass: null, opaqueMaterial: null, transparentMaterial: null, contentsGroup: leftRoomContents,
                                     visibleByDoor: false, visibleByWindow: false, lamp: roomLampBL
                                 });
+            }
+
+            // --- Create Long Sills and Headers for Outer Walls ---
+            const sillH = SETTINGS.wallHeight * WINDOW_SILL_RATIO;
+            const headerH = SETTINGS.wallHeight - (SETTINGS.wallHeight * WINDOW_HEIGHT_RATIO) - sillH;
+
+            // A-Wing Outer Walls
+            const outerWallAX_Right = -SETTINGS.roomSize + wallDepth / 2;
+            const outerWallAX_Left = SETTINGS.corridorWidth + SETTINGS.roomSize - wallDepth / 2;
+            const centerZ_A = totalCorridorLength / 2;
+
+            if (sillH > 0.01) {
+                const sillAGeo = new THREE.BoxGeometry(wallDepth, sillH, totalCorridorLength);
+                const sillAR = new THREE.Mesh(sillAGeo, wallMaterialA); // Right side sill
+                sillAR.position.set(outerWallAX_Right, floorY + sillH / 2, centerZ_A);
+                scene.add(sillAR); worldObjects.push(sillAR); sillAR.name = `OuterWallSill_A_R_F${i}`;
+                const sillAL = new THREE.Mesh(sillAGeo, wallMaterialA); // Left side sill
+                sillAL.position.set(outerWallAX_Left, floorY + sillH / 2, centerZ_A);
+                scene.add(sillAL); worldObjects.push(sillAL); sillAL.name = `OuterWallSill_A_L_F${i}`;
+            }
+            if (headerH > 0.01) {
+                const headerAGeo = new THREE.BoxGeometry(wallDepth, headerH, totalCorridorLength);
+                const headerAR = new THREE.Mesh(headerAGeo, wallMaterialA); // Right side header
+                headerAR.position.set(outerWallAX_Right, floorY + SETTINGS.wallHeight - headerH / 2, centerZ_A);
+                scene.add(headerAR); worldObjects.push(headerAR); headerAR.name = `OuterWallHeader_A_R_F${i}`;
+                const headerAL = new THREE.Mesh(headerAGeo, wallMaterialA); // Left side header
+                headerAL.position.set(outerWallAX_Left, floorY + SETTINGS.wallHeight - headerH / 2, centerZ_A);
+                scene.add(headerAL); worldObjects.push(headerAL); headerAL.name = `OuterWallHeader_A_L_F${i}`;
+            }
+
+            // B-Wing Outer Walls
+            const outerWallBX_Right = -SETTINGS.roomSize + wallDepth / 2; // Same X as A-wing
+            const outerWallBX_Left = SETTINGS.corridorWidth + SETTINGS.roomSize - wallDepth / 2; // Same X as A-wing
+            const centerZ_B = -16 - totalCorridorLength / 2;
+
+            if (sillH > 0.01) {
+                const sillBGeo = new THREE.BoxGeometry(wallDepth, sillH, totalCorridorLength);
+                const sillBR = new THREE.Mesh(sillBGeo, wallMaterialB); // Right side sill
+                sillBR.position.set(outerWallBX_Right, floorY + sillH / 2, centerZ_B);
+                scene.add(sillBR); worldObjects.push(sillBR); sillBR.name = `OuterWallSill_B_R_F${i}`;
+                const sillBL = new THREE.Mesh(sillBGeo, wallMaterialB); // Left side sill
+                sillBL.position.set(outerWallBX_Left, floorY + sillH / 2, centerZ_B);
+                scene.add(sillBL); worldObjects.push(sillBL); sillBL.name = `OuterWallSill_B_L_F${i}`;
+            }
+            if (headerH > 0.01) {
+                const headerBGeo = new THREE.BoxGeometry(wallDepth, headerH, totalCorridorLength);
+                const headerBR = new THREE.Mesh(headerBGeo, wallMaterialB); // Right side header
+                headerBR.position.set(outerWallBX_Right, floorY + SETTINGS.wallHeight - headerH / 2, centerZ_B);
+                scene.add(headerBR); worldObjects.push(headerBR); headerBR.name = `OuterWallHeader_B_R_F${i}`;
+                const headerBL = new THREE.Mesh(headerBGeo, wallMaterialB); // Left side header
+                headerBL.position.set(outerWallBX_Left, floorY + SETTINGS.wallHeight - headerH / 2, centerZ_B);
+                scene.add(headerBL); worldObjects.push(headerBL); headerBL.name = `OuterWallHeader_B_L_F${i}`;
             }
 
             // Corridor Ceiling Plane
@@ -1943,14 +2016,44 @@ function generateWorld() {
             worldObjects.push(ceilingB);
 
 
-            // Corridor Walls & Doors (Right Wall Segments, Left Wall Segments)
+            // --- Corridor Walls & Doors ---
+            const wallAboveDoorHeight = SETTINGS.wallHeight - SETTINGS.doorHeight;
+
+            // Create long header walls for A-Wing
+            if (wallAboveDoorHeight > 0.01) { // Only create if there's actual height
+                const headerAGeo = new THREE.BoxGeometry(wallDepth, wallAboveDoorHeight, totalCorridorLength);
+                // Right side header (A-Wing)
+                const headerAR = new THREE.Mesh(headerAGeo, wallMaterialA);
+                headerAR.position.set(0, floorY + SETTINGS.doorHeight + wallAboveDoorHeight / 2, totalCorridorLength / 2);
+                headerAR.castShadow = true; headerAR.receiveShadow = true; scene.add(headerAR); worldObjects.push(headerAR);
+                // Left side header (A-Wing)
+                const headerAL = new THREE.Mesh(headerAGeo, wallMaterialA);
+                headerAL.position.set(SETTINGS.corridorWidth, floorY + SETTINGS.doorHeight + wallAboveDoorHeight / 2, totalCorridorLength / 2);
+                headerAL.castShadow = true; headerAL.receiveShadow = true; scene.add(headerAL); worldObjects.push(headerAL);
+            }
+
+            // Create long header walls for B-Wing
+            if (wallAboveDoorHeight > 0.01) { // Only create if there's actual height
+                const headerBGeo = new THREE.BoxGeometry(wallDepth, wallAboveDoorHeight, totalCorridorLength);
+                // Right side header (B-Wing)
+                const headerBR = new THREE.Mesh(headerBGeo, wallMaterialB);
+                headerBR.position.set(0, floorY + SETTINGS.doorHeight + wallAboveDoorHeight / 2, -16 - totalCorridorLength / 2);
+                headerBR.castShadow = true; headerBR.receiveShadow = true; scene.add(headerBR); worldObjects.push(headerBR);
+                // Left side header (B-Wing)
+                const headerBL = new THREE.Mesh(headerBGeo, wallMaterialB);
+                headerBL.position.set(SETTINGS.corridorWidth, floorY + SETTINGS.doorHeight + wallAboveDoorHeight / 2, -16 - totalCorridorLength / 2);
+                headerBL.castShadow = true; headerBL.receiveShadow = true; scene.add(headerBL); worldObjects.push(headerBL);
+            }
+
             // Right Wall Segments (Positive X direction)
             for (let j = 0; j < SETTINGS.doorsPerSide; j++) {
                 const segmentZ = (j + 0.5) * SETTINGS.corridorSegmentLength;
-                const wall1Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight, doorOffset);
-                const wall1 = new THREE.Mesh(wall1Geo, wallMaterial);
-                wall1.position.set(0, floorY + SETTINGS.wallHeight / 2, segmentZ - SETTINGS.corridorSegmentLength / 2 + doorOffset / 2);
+                // Wall segment next to door (door height)
+                const wall1Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.doorHeight, doorOffset);
+                const wall1 = new THREE.Mesh(wall1Geo, wallMaterialA); // A-wing
+                wall1.position.set(0, floorY + SETTINGS.doorHeight / 2, segmentZ - SETTINGS.corridorSegmentLength / 2 + doorOffset / 2);
                 wall1.castShadow = true; wall1.receiveShadow = true; scene.add(wall1); worldObjects.push(wall1);
+
                 const isRed = currentDoorIndex === redDoorIndex;
                 const doorMaterialToUse = isRed ? redDoorMaterial : blackDoorMaterial;
                 const doorGeo = new THREE.BoxGeometry(SETTINGS.doorDepth, SETTINGS.doorHeight, SETTINGS.doorWidth);
@@ -1965,6 +2068,7 @@ function generateWorld() {
                 if (roomDataR) roomDataR.door = door;
                 door.name = `${i + 1}${String(currentDoorIndex + 1).padStart(2, '0')}`;
                 scene.add(door); doors.push(door); worldObjects.push(door);
+
                 const knobGeometry = new THREE.SphereGeometry(0.06, 8, 6);
                 const knobMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa11, metalness: 0.8, roughness: 0.1 });
                 const knob = new THREE.Mesh(knobGeometry, knobMaterial);
@@ -1973,25 +2077,22 @@ function generateWorld() {
                 const knob2 = new THREE.Mesh(knobGeometry, knobMaterial);
                 knob2.position.set(-SETTINGS.doorDepth/2 - 0.05, 0, SETTINGS.doorWidth - 0.15);
                 knob2.userData.doorKnob = true; door.add(knob2); door.userData.knob2 = knob2;
-                const wallAboveGeo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight - SETTINGS.doorHeight, SETTINGS.doorWidth);
-                const wallAbove = new THREE.Mesh(wallAboveGeo, wallMaterial);
-                wallAbove.position.set(0, floorY + SETTINGS.doorHeight + (SETTINGS.wallHeight - SETTINGS.doorHeight) / 2, segmentZ);
-                wallAbove.castShadow = true; wallAbove.receiveShadow = true; scene.add(wallAbove); worldObjects.push(wallAbove);
-                const wall2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight, doorOffset);
-                const wall2 = new THREE.Mesh(wall2Geo, wallMaterial);
-                wall2.position.set(0, floorY + SETTINGS.wallHeight / 2, segmentZ + SETTINGS.doorWidth / 2 + doorOffset / 2);
+
+                const wall2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.doorHeight, doorOffset);
+                const wall2 = new THREE.Mesh(wall2Geo, wallMaterialA); // A-wing
+                wall2.position.set(0, floorY + SETTINGS.doorHeight / 2, segmentZ + SETTINGS.doorWidth / 2 + doorOffset / 2);
                 wall2.castShadow = true; wall2.receiveShadow = true; scene.add(wall2); worldObjects.push(wall2);
                 currentDoorIndex++;
             }
             // Right Wall B Segments (Negative Z Direction) (Positive X direction)
             for (let j = 0; j < SETTINGS.doorsPerSide; j++) {
                 const segmentBZ = ((j + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
-                const wall1Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight, doorOffset);
-                const wall1 = new THREE.Mesh(wall1Geo, wallMaterial);
-                wall1.position.set(0, floorY + SETTINGS.wallHeight / 2, segmentBZ - SETTINGS.corridorSegmentLength / 2 + doorOffset / 2);
+                const wall1Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.doorHeight, doorOffset);
+                const wall1 = new THREE.Mesh(wall1Geo, wallMaterialB); // B-wing
+                wall1.position.set(0, floorY + SETTINGS.doorHeight / 2, segmentBZ - SETTINGS.corridorSegmentLength / 2 + doorOffset / 2);
                 wall1.castShadow = true; wall1.receiveShadow = true; scene.add(wall1); worldObjects.push(wall1);
                 const isRed = currentDoorIndex === redDoorIndex;
-                const doorMaterialToUse = isRed ? redDoorMaterial : blackDoorMaterial;
+                const doorMaterialToUse = isRed ? redDoorMaterial : navyDoorMaterial; // Use navy for B-Wing
                 const doorGeo = new THREE.BoxGeometry(SETTINGS.doorDepth, SETTINGS.doorHeight, SETTINGS.doorWidth);
                 doorGeo.translate(0, 0, SETTINGS.doorWidth/2);
                 const door = new THREE.Mesh(doorGeo, doorMaterialToUse);
@@ -2004,21 +2105,19 @@ function generateWorld() {
                 if (roomDataR) roomDataR.door = door;
                 door.name = `${i + 1}${String(currentDoorIndex + 1).padStart(2, '0')}`;
                 scene.add(door); doors.push(door); worldObjects.push(door);
-                const knobGeometry = new THREE.SphereGeometry(0.06, 8, 6);
-                const knobMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa11, metalness: 0.8, roughness: 0.1 });
+
+                const knobGeometry = new THREE.SphereGeometry(0.06, 8, 6); // B-Wing knob material
+                const knobMaterial = whiteMaterial.clone(); // Use white for B-Wing knobs
                 const knob = new THREE.Mesh(knobGeometry, knobMaterial);
                 knob.position.set(SETTINGS.doorDepth/2 + 0.05, 0, SETTINGS.doorWidth - 0.15);
                 knob.userData.doorKnob = true; door.add(knob); door.userData.knob = knob;
                 const knob2 = new THREE.Mesh(knobGeometry, knobMaterial);
                 knob2.position.set(-SETTINGS.doorDepth/2 - 0.05, 0, SETTINGS.doorWidth - 0.15);
                 knob2.userData.doorKnob = true; door.add(knob2); door.userData.knob2 = knob2;
-                const wallAboveGeo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight - SETTINGS.doorHeight, SETTINGS.doorWidth);
-                const wallAbove = new THREE.Mesh(wallAboveGeo, wallMaterial);
-                wallAbove.position.set(0, floorY + SETTINGS.doorHeight + (SETTINGS.wallHeight - SETTINGS.doorHeight) / 2, segmentBZ);
-                wallAbove.castShadow = true; wallAbove.receiveShadow = true; scene.add(wallAbove); worldObjects.push(wallAbove);
-                const wall2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight, doorOffset);
-                const wall2 = new THREE.Mesh(wall2Geo, wallMaterial);
-                wall2.position.set(0, floorY + SETTINGS.wallHeight / 2, segmentBZ + SETTINGS.doorWidth / 2 + doorOffset / 2);
+
+                const wall2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.doorHeight, doorOffset);
+                const wall2 = new THREE.Mesh(wall2Geo, wallMaterialB); // B-wing
+                wall2.position.set(0, floorY + SETTINGS.doorHeight / 2, segmentBZ + SETTINGS.doorWidth / 2 + doorOffset / 2);
                 wall2.castShadow = true; wall2.receiveShadow = true; scene.add(wall2); worldObjects.push(wall2);
                 currentDoorIndex++;
             }
@@ -2026,9 +2125,9 @@ function generateWorld() {
             const LeftWallX = SETTINGS.corridorWidth;
             for (let j = 0; j < SETTINGS.doorsPerSide; j++) {
                 const segmentZ = (j + 0.5) * SETTINGS.corridorSegmentLength;
-                const wall1Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight, doorOffset);
-                const wall1 = new THREE.Mesh(wall1Geo, wallMaterial);
-                wall1.position.set(LeftWallX, floorY + SETTINGS.wallHeight / 2, segmentZ - SETTINGS.corridorSegmentLength / 2 + doorOffset / 2);
+                const wall1Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.doorHeight, doorOffset);
+                const wall1 = new THREE.Mesh(wall1Geo, wallMaterialA); // A-wing
+                wall1.position.set(LeftWallX, floorY + SETTINGS.doorHeight / 2, segmentZ - SETTINGS.corridorSegmentLength / 2 + doorOffset / 2);
                 wall1.castShadow = true; wall1.receiveShadow = true; scene.add(wall1); worldObjects.push(wall1);
                 const isRed = currentDoorIndex === redDoorIndex;
                 const doorMaterialToUse = isRed ? redDoorMaterial : blackDoorMaterial;
@@ -2044,6 +2143,7 @@ function generateWorld() {
                 if (roomDataL) roomDataL.door = door;
                 door.name = `${i + 1}${String(currentDoorIndex + 1).padStart(2, '0')}`;
                 scene.add(door); doors.push(door); worldObjects.push(door);
+
                 const knobGeometry = new THREE.SphereGeometry(0.06, 8, 6);
                 const knobMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa11, metalness: 0.8, roughness: 0.1});
                 const knob = new THREE.Mesh(knobGeometry, knobMaterial);
@@ -2051,14 +2151,11 @@ function generateWorld() {
                 knob.userData.doorKnob = true; door.add(knob); door.userData.knob = knob;
                 const knob2 = new THREE.Mesh(knobGeometry, knobMaterial);
                 knob2.position.set(-SETTINGS.doorDepth/2 - 0.05, 0, SETTINGS.doorWidth - 0.15);
-                knob2.userData.doorKnob = true; door.add(knob2); door.userData.knob2 = knob;
-                const wallAboveGeo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight - SETTINGS.doorHeight, SETTINGS.doorWidth);
-                const wallAbove = new THREE.Mesh(wallAboveGeo, wallMaterial);
-                wallAbove.position.set(LeftWallX, floorY + SETTINGS.doorHeight + (SETTINGS.wallHeight - SETTINGS.doorHeight) / 2, segmentZ);
-                wallAbove.castShadow = true; wallAbove.receiveShadow = true; scene.add(wallAbove); worldObjects.push(wallAbove);
-                const wall2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight, doorOffset);
-                const wall2 = new THREE.Mesh(wall2Geo, wallMaterial);
-                wall2.position.set(LeftWallX, floorY + SETTINGS.wallHeight / 2, segmentZ + SETTINGS.doorWidth / 2 + doorOffset / 2);
+                knob2.userData.doorKnob = true; door.add(knob2); door.userData.knob2 = knob2; // Corrected typo
+
+                const wall2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.doorHeight, doorOffset);
+                const wall2 = new THREE.Mesh(wall2Geo, wallMaterialA); // A-wing
+                wall2.position.set(LeftWallX, floorY + SETTINGS.doorHeight / 2, segmentZ + SETTINGS.doorWidth / 2 + doorOffset / 2);
                 wall2.castShadow = true; wall2.receiveShadow = true; scene.add(wall2); worldObjects.push(wall2);
                 currentDoorIndex++;
             }
@@ -2066,12 +2163,12 @@ function generateWorld() {
             const LeftWallBX = SETTINGS.corridorWidth;
             for (let j = 0; j < SETTINGS.doorsPerSide; j++) {
                 const segmentBZ = ((j + 0.5) * SETTINGS.corridorSegmentLength) - 16 - totalCorridorLength;
-                const wall1Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight, doorOffset);
-                const wall1 = new THREE.Mesh(wall1Geo, wallMaterial);
-                wall1.position.set(LeftWallX, floorY + SETTINGS.wallHeight / 2, segmentBZ - SETTINGS.corridorSegmentLength / 2 + doorOffset / 2);
+                const wall1Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.doorHeight, doorOffset);
+                const wall1 = new THREE.Mesh(wall1Geo, wallMaterialB); // B-wing
+                wall1.position.set(LeftWallX, floorY + SETTINGS.doorHeight / 2, segmentBZ - SETTINGS.corridorSegmentLength / 2 + doorOffset / 2);
                 wall1.castShadow = true; wall1.receiveShadow = true; scene.add(wall1); worldObjects.push(wall1);
                 const isRed = currentDoorIndex === redDoorIndex;
-                const doorMaterialToUse = isRed ? redDoorMaterial : blackDoorMaterial;
+                const doorMaterialToUse = isRed ? redDoorMaterial : navyDoorMaterial; // Use navy for B-Wing
                 const doorGeo = new THREE.BoxGeometry(SETTINGS.doorDepth, SETTINGS.doorHeight, SETTINGS.doorWidth);
                 doorGeo.translate(0, 0, SETTINGS.doorWidth/2);
                 const door = new THREE.Mesh(doorGeo, doorMaterialToUse);
@@ -2084,21 +2181,19 @@ function generateWorld() {
                 if (roomDataL) roomDataL.door = door;
                 door.name = `${i + 1}${String(currentDoorIndex + 1).padStart(2, '0')}`;
                 scene.add(door); doors.push(door); worldObjects.push(door);
-                const knobGeometry = new THREE.SphereGeometry(0.06, 8, 6);
-                const knobMaterial = new THREE.MeshStandardMaterial({ color: 0xffaa11, metalness: 0.8, roughness: 0.1});
+
+                const knobGeometry = new THREE.SphereGeometry(0.06, 8, 6); // B-Wing knob material
+                const knobMaterial = whiteMaterial.clone(); // Use white for B-Wing knobs
                 const knob = new THREE.Mesh(knobGeometry, knobMaterial);
                 knob.position.set(SETTINGS.doorDepth/2 + 0.05, 0, SETTINGS.doorWidth - 0.15);
                 knob.userData.doorKnob = true; door.add(knob); door.userData.knob = knob;
                 const knob2 = new THREE.Mesh(knobGeometry, knobMaterial);
                 knob2.position.set(-SETTINGS.doorDepth/2 - 0.05, 0, SETTINGS.doorWidth - 0.15);
-                knob2.userData.doorKnob = true; door.add(knob2); door.userData.knob2 = knob;
-                const wallAboveGeo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight - SETTINGS.doorHeight, SETTINGS.doorWidth);
-                const wallAbove = new THREE.Mesh(wallAboveGeo, wallMaterial);
-                wallAbove.position.set(LeftWallX, floorY + SETTINGS.doorHeight + (SETTINGS.wallHeight - SETTINGS.doorHeight) / 2, segmentBZ);
-                wallAbove.castShadow = true; wallAbove.receiveShadow = true; scene.add(wallAbove); worldObjects.push(wallAbove);
-                const wall2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.wallHeight, doorOffset);
-                const wall2 = new THREE.Mesh(wall2Geo, wallMaterial);
-                wall2.position.set(LeftWallX, floorY + SETTINGS.wallHeight / 2, segmentBZ + SETTINGS.doorWidth / 2 + doorOffset / 2);
+                knob2.userData.doorKnob = true; door.add(knob2); door.userData.knob2 = knob2; // Corrected typo
+
+                const wall2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.doorHeight, doorOffset);
+                const wall2 = new THREE.Mesh(wall2Geo, wallMaterialB); // B-wing
+                wall2.position.set(LeftWallX, floorY + SETTINGS.doorHeight / 2, segmentBZ + SETTINGS.doorWidth / 2 + doorOffset / 2);
                 wall2.castShadow = true; wall2.receiveShadow = true; scene.add(wall2); worldObjects.push(wall2);
                 currentDoorIndex++;
             }
@@ -2163,7 +2258,7 @@ function generateWorld() {
 
             // Far end wall for office floors (at end of escalator area)
             const endWallEscGeo = new THREE.BoxGeometry(SETTINGS.corridorWidth + (2 * escalatorWidth), SETTINGS.floorHeight, wallDepth);
-            const endWallFar = new THREE.Mesh(endWallEscGeo, wallMaterial);
+            const endWallFar = new THREE.Mesh(endWallEscGeo, wallMaterialA); // A-wing
             endWallFar.position.set(SETTINGS.corridorWidth / 2, floorY + SETTINGS.wallHeight / 2, totalCorridorLength + 4 + escalatorLength + 4);
             endWallFar.name = `Escalator Back Wall ${i}`;
             endWallFar.castShadow = true; endWallFar.receiveShadow = true;
@@ -2193,7 +2288,7 @@ function generateWorld() {
 
              // Far end wall for office B floors (at end of escalator area)
             const endWallBEscGeo = new THREE.BoxGeometry(SETTINGS.corridorWidth + (2 * escalatorWidth), SETTINGS.floorHeight, wallDepth);
-            const endWallBFar = new THREE.Mesh(endWallBEscGeo, wallMaterial);
+            const endWallBFar = new THREE.Mesh(endWallBEscGeo, wallMaterialB); // B-wing
             endWallBFar.position.set(SETTINGS.corridorWidth / 2, floorY + SETTINGS.wallHeight / 2, - 16 -(totalCorridorLength + 4 + escalatorLength + 4));
             endWallBFar.name = `Escalator B Back Wall B ${i}`;
             endWallBFar.castShadow = true; endWallBFar.receiveShadow = true;
@@ -2208,8 +2303,8 @@ function generateWorld() {
                 depth: 0.15, // Corrected: Use 'depth' for extrusion
                 curveSegments: 12,
                 bevelEnabled: false });
-            textGeoB.center(); // Center the geometry vertices
-            const textMeshB = new THREE.Mesh(textGeoB, textMaterial);
+            textGeoB.center(); 
+            const textMeshB = new THREE.Mesh(textGeoB, whiteMaterial.clone()); // Use white for B-Wing signage
             textMeshB.position.set(
                 endWallBFar.position.x, // Now centered because geometry is centered
                 endWallBFar.position.y, // Now centered because geometry is centered
@@ -2221,7 +2316,7 @@ function generateWorld() {
             // --- Walls around Escalator Area for Office Floors ---
             // Right Wall next to escalator (Positive Z direction)
             const wallR2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.floorHeight, escalatorLength + 8);
-            const wallR2 = new THREE.Mesh(wallR2Geo, wallMaterial);
+            const wallR2 = new THREE.Mesh(wallR2Geo, wallMaterialA); // A-wing
             wallR2.name = `Escalator RHS Wall ${i}`;
             wallR2.position.set(-escalatorWidth, floorY + SETTINGS.wallHeight / 2, totalCorridorLength + (escalatorLength/2) + 4);
             wallR2.castShadow = true; wallR2.receiveShadow = true;
@@ -2230,7 +2325,7 @@ function generateWorld() {
             // --- Walls around Escalator B Area for Office Floors ---
             // Right Wall next to escalator B (Negative Z direction)
             const wallBR2Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.floorHeight, escalatorLength + 8);
-            const wallBR2 = new THREE.Mesh(wallBR2Geo, wallMaterial);
+            const wallBR2 = new THREE.Mesh(wallBR2Geo, wallMaterialB); // B-wing
             wallBR2.name = `Escalator B RHS Wall ${i}`;
             wallBR2.position.set(-escalatorWidth, floorY + SETTINGS.wallHeight / 2, - 16 -(totalCorridorLength + (escalatorLength/2) + 4));
             wallBR2.castShadow = true; wallBR2.receiveShadow = true;
@@ -2239,7 +2334,7 @@ function generateWorld() {
 
             // Right Corner Wall next to escalator (Negative X direction)
             const wallRCornerGeo = new THREE.BoxGeometry(escalatorWidth + wallDepth, SETTINGS.floorHeight, wallDepth);
-            const wallRCorner = new THREE.Mesh(wallRCornerGeo, wallMaterial);
+            const wallRCorner = new THREE.Mesh(wallRCornerGeo, wallMaterialA); // A-wing
             wallRCorner.name = `Escalator RHS Corner Wall ${i}`;
             wallRCorner.position.set(-escalatorWidth/2, floorY + SETTINGS.wallHeight / 2, totalCorridorLength);
             wallRCorner.castShadow = true; wallRCorner.receiveShadow = true;
@@ -2247,7 +2342,7 @@ function generateWorld() {
 
              // Right Corner Wall B next to escalator (Negative Z Direction) (Negative X direction)
             const wallBRCornerGeo = new THREE.BoxGeometry(escalatorWidth + wallDepth, SETTINGS.floorHeight, wallDepth);
-            const wallBRCorner = new THREE.Mesh(wallBRCornerGeo, wallMaterial);
+            const wallBRCorner = new THREE.Mesh(wallBRCornerGeo, wallMaterialB); // B-wing
             wallBRCorner.name = `Escalator B RHS Corner Wall ${i}`;
             wallBRCorner.position.set(-escalatorWidth/2, floorY + SETTINGS.wallHeight / 2, -16 - totalCorridorLength);
             wallBRCorner.castShadow = true; wallBRCorner.receiveShadow = true;
@@ -2257,7 +2352,7 @@ function generateWorld() {
             // Left Wall next to escalator (Positive Z direction)
             const LeftWallXEsc = SETTINGS.corridorWidth; // Re-scope for clarity if needed
             const wallL3Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.floorHeight, escalatorLength + 8);
-            const wallL3 = new THREE.Mesh(wallL3Geo, wallMaterial);
+            const wallL3 = new THREE.Mesh(wallL3Geo, wallMaterialA); // A-wing
             wallL3.name = `Escalator Left Wall ${i}`;
             wallL3.position.set(LeftWallXEsc + escalatorWidth, floorY + SETTINGS.wallHeight / 2, totalCorridorLength + (escalatorLength/2) + 4);
             wallL3.castShadow = true; wallL3.receiveShadow = true;
@@ -2266,7 +2361,7 @@ function generateWorld() {
             // Left Wall next to escalator B (Negative Z direction)
             const LeftWallBXEsc = SETTINGS.corridorWidth; // Re-scope for clarity if needed
             const wallBL3Geo = new THREE.BoxGeometry(wallDepth, SETTINGS.floorHeight, escalatorLength + 8);
-            const wallBL3 = new THREE.Mesh(wallBL3Geo, wallMaterial);
+            const wallBL3 = new THREE.Mesh(wallBL3Geo, wallMaterialB); // B-wing
             wallBL3.name = `Escalator B Left Wall ${i}`;
             wallBL3.position.set(LeftWallXEsc + escalatorWidth, floorY + SETTINGS.wallHeight / 2, -16 - (totalCorridorLength + (escalatorLength/2) + 4));
             wallBL3.castShadow = true; wallBL3.receiveShadow = true;
@@ -2275,7 +2370,7 @@ function generateWorld() {
             
             // Left Corner Wall next to escalator (Negative X direction)
             const wallLCornerGeo = new THREE.BoxGeometry(escalatorWidth + wallDepth, SETTINGS.floorHeight, wallDepth);
-            const wallLCorner = new THREE.Mesh(wallLCornerGeo, wallMaterial);
+            const wallLCorner = new THREE.Mesh(wallLCornerGeo, wallMaterialA); // A-wing
             wallLCorner.name = `Escalator LHS Corner Wall ${i}`; // Corrected name
             wallLCorner.position.set(LeftWallXEsc + escalatorWidth/2, floorY + SETTINGS.wallHeight / 2, totalCorridorLength);
             wallLCorner.castShadow = true; wallLCorner.receiveShadow = true;
@@ -2283,7 +2378,7 @@ function generateWorld() {
 
             // Left Corner Wall B next to escalator (Negative Z Direction)(Negative X direction)
             const wallBLCornerGeo = new THREE.BoxGeometry(escalatorWidth + wallDepth, SETTINGS.floorHeight, wallDepth);
-            const wallBLCorner = new THREE.Mesh(wallBLCornerGeo, wallMaterial);
+            const wallBLCorner = new THREE.Mesh(wallBLCornerGeo, wallMaterialB); // B-wing
             wallBLCorner.name = `Escalator B LHS Corner Wall ${i}`; // Corrected name
             wallBLCorner.position.set(LeftWallXEsc + escalatorWidth/2, floorY + SETTINGS.wallHeight / 2, -16 - totalCorridorLength);
             wallBLCorner.castShadow = true; wallBLCorner.receiveShadow = true;
@@ -2297,8 +2392,8 @@ function generateWorld() {
 
         // --- Common elements for ALL floors (basement and above-ground) ---
         // Define the top surface Y for the current and lower floors (used by balustrades)
-        const currentFloorTopY = floorY;
-        const lowerFloorTopY = (i - 1) * SETTINGS.floorHeight;
+        // const currentFloorTopY = floorY; // No longer needed here, use floorY directly
+        // const lowerFloorTopY = (i - 1) * SETTINGS.floorHeight; // No longer needed here, use direct calculation
 
         // Escalator Area Floor Slabs & Lights (conditionally generated)
         const needsEscalatorPlatformsThisFloor =
@@ -2414,7 +2509,7 @@ function generateWorld() {
             // Balustrade settings
             const balustradeHeight = 1.7; // Height of the balustrade
             const balustradeThickness = 0.1;
-            const balustradeMaterial = new THREE.MeshStandardMaterial({ color: 0x999999, metalness: 0.8, roughness: 0.2  }); // Gray material
+            const balustradeMaterial = new THREE.MeshStandardMaterial({ color: 0x999999, metalness: 0.8, roughness: 0.2 }); // Gray material for balustrades
             
             // Skip escalator generation if this is the absolute lowest basement floor (can't go further down)
             if (i > 0 && i < SETTINGS.numFloors) { // Create escalators connecting floor i (e.g. 1) down to floor i-1 (e.g. 0)
@@ -2422,7 +2517,7 @@ function generateWorld() {
             // A-Wing Escalators /////// AAAAAAAAAA
                 // ---  A-Wing Left  side Escalator A down Starting Point (RED) ---
             const startEscDownGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1); // <-- Add this line
-            const startEscDown = new THREE.Mesh(startEscDownGeo, EscalatorEmbarkMaterial);
+            const startEscDown = new THREE.Mesh(startEscDownGeo, window.EscalatorEmbarkMaterial);
             startEscDown.name = `Left Escalator Down Start A ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             startEscDown.position.set(
@@ -2444,7 +2539,7 @@ function generateWorld() {
                 const y = floorY -.01 - (s + 1) * stepHeight + stepHeight / 2;
                 const z = totalCorridorLength + 4.3 + (s / stepCount) * SETTINGS.escalatorLength;
                 const stepGeo = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
-                const stepDown = new THREE.Mesh(stepGeo, EscalatorMaterial);
+                const stepDown = new THREE.Mesh(stepGeo, window.EscalatorMaterial);
                 stepDown.position.set(
                     SETTINGS.corridorWidth + (stepWidth / 2) + 0.1,
                     y,
@@ -2461,7 +2556,7 @@ function generateWorld() {
             //  A-Wing Escalator Down on lower floor Ending Point (Left side    )    
             const endEscDownGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             
-            const endEscDown = new THREE.Mesh(endEscDownGeo, EscalatorMaterial);
+            const endEscDown = new THREE.Mesh(endEscDownGeo, window.EscalatorMaterial);
             endEscDown.name = `Left Escalator Down End A ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             endEscDown.position.set(
@@ -2478,7 +2573,7 @@ function generateWorld() {
 
             // ---  A-Wing  Right side Escalator going Up on Lower floor Starting Point (RED) ---
             const startEscUpGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
-            const startEscUp = new THREE.Mesh(startEscUpGeo, EscalatorEmbarkMaterial);
+            const startEscUp = new THREE.Mesh(startEscUpGeo, window.EscalatorEmbarkMaterial);
             startEscUp.name = `Right Escalator Up Start A ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             startEscUp.position.set(
@@ -2501,7 +2596,7 @@ function generateWorld() {
                 const y = floorY + 0.01 - (s + 1) * stepHeight + stepHeight / 2;
                 const z = totalCorridorLength + 4.3 + (s / stepCount) * SETTINGS.escalatorLength;
                 const stepGeo = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
-                const stepUp = new THREE.Mesh(stepGeo, EscalatorMaterial);
+                const stepUp = new THREE.Mesh(stepGeo, window.EscalatorMaterial);
                 stepUp.position.set(
                     -0.1 - (stepWidth / 2),
                     y,
@@ -2517,7 +2612,7 @@ function generateWorld() {
 
             // Escalator A-Wing Up from lower floor Ending Point    
             const endEscUpGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
-            const endEscUp = new THREE.Mesh(endEscUpGeo, EscalatorMaterial);
+            const endEscUp = new THREE.Mesh(endEscUpGeo, window.EscalatorMaterial);
             endEscUp.name = `Right Escalator Up End A ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             endEscUp.position.set(
@@ -2539,7 +2634,7 @@ function generateWorld() {
             // B-Wing Escalators /////// BBBBBBBBBBBBBB
             // ---  B-Wing Left  side Escalator B down Starting Point (RED) ---
             const startEscDownGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1); // <-- Add this line
-            const startEscDownB = new THREE.Mesh(startEscDownGeoB, EscalatorEmbarkMaterial);
+            const startEscDownB = new THREE.Mesh(startEscDownGeoB, window.EscalatorEmbarkMaterialB);
             startEscDownB.name = `Left Escalator Down Start B ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             startEscDownB.position.set(
@@ -2561,7 +2656,7 @@ function generateWorld() {
                 const y = floorY -.01 - (s + 1) * stepHeight + stepHeight / 2;
                 const zB = -16 - totalCorridorLength - 4.3 - (s / stepCount) * SETTINGS.escalatorLength;
                 const stepGeoB = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
-                const stepDownB = new THREE.Mesh(stepGeoB, EscalatorMaterial);
+                const stepDownB = new THREE.Mesh(stepGeoB, window.EscalatorMaterial);
                 stepDownB.position.set(
                     - (stepWidth / 2) - 0.1,
                     y,
@@ -2578,7 +2673,7 @@ function generateWorld() {
             //  B-Wing Escalator Down on lower floor Ending Point (Left side    )    
             const endEscDownGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             
-            const endEscDownB = new THREE.Mesh(endEscDownGeoB, EscalatorMaterial);
+            const endEscDownB = new THREE.Mesh(endEscDownGeoB, window.EscalatorMaterial);
             endEscDownB.name = `Left Escalator Down End B ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             endEscDownB.position.set(
@@ -2595,7 +2690,7 @@ function generateWorld() {
 
             // ---  B-Wing  Right side Escalator going Up on Lower floor Starting Point (RED) ---
             const startEscUpGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
-            const startEscUpB = new THREE.Mesh(startEscUpGeoB, EscalatorEmbarkMaterial);
+            const startEscUpB = new THREE.Mesh(startEscUpGeoB, window.EscalatorEmbarkMaterialB);
             startEscUpB.name = `Right Escalator Up Start B ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             startEscUpB.position.set(
@@ -2618,7 +2713,7 @@ function generateWorld() {
                 const y = floorY + 0.01 - (s + 1) * stepHeight + stepHeight / 2;
                 const zB = -16 - totalCorridorLength - 4.3 - (s / stepCount) * SETTINGS.escalatorLength;
                 const stepGeoB = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
-                const stepUpB = new THREE.Mesh(stepGeoB, EscalatorMaterial);
+                const stepUpB = new THREE.Mesh(stepGeoB, window.EscalatorMaterial);
                 stepUpB.position.set(
                     SETTINGS.corridorWidth + 0.1 + (stepWidth / 2),
                     y,
@@ -2634,7 +2729,7 @@ function generateWorld() {
 
             // Escalator B-Wing Up from lower floor Ending Point    
             const endEscUpGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
-            const endEscUpB = new THREE.Mesh(endEscUpGeoB, EscalatorMaterial);
+            const endEscUpB = new THREE.Mesh(endEscUpGeoB, window.EscalatorMaterial);
             endEscUpB.name = `Right Escalator Up End B ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             endEscUpB.position.set(
@@ -2656,8 +2751,8 @@ function generateWorld() {
             // --- Add Balustrades --- ///////////////////////////////////////////////////
 
             // Balustrades for Escalator Wing-A UP (Left side, X from -escalatorWidth to 0) /// AAAAAAAA
-            const startUpBalustrade = new THREE.Vector3(-SETTINGS.escalatorWidth / 2, lowerFloorTopY-floorDepth, totalCorridorLength + SETTINGS.escalatorLength + 4 );
-            const endUpBalustrade = new THREE.Vector3(-SETTINGS.escalatorWidth / 2, currentFloorTopY-floorDepth/2, totalCorridorLength + 3.5);
+            const startUpBalustrade = new THREE.Vector3(-SETTINGS.escalatorWidth / 2, (i - 1) * SETTINGS.floorHeight - floorDepth, totalCorridorLength + SETTINGS.escalatorLength + 4 );
+            const endUpBalustrade = new THREE.Vector3(-SETTINGS.escalatorWidth / 2, floorY - floorDepth/2, totalCorridorLength + 3.5);
             const dirUpBalustrade = new THREE.Vector3().subVectors(endUpBalustrade, startUpBalustrade);
             const lengthUpBalustrade = dirUpBalustrade.length();
             const centerPosUpBalustrade = new THREE.Vector3().addVectors(startUpBalustrade, endUpBalustrade).multiplyScalar(0.5);
@@ -2713,8 +2808,8 @@ function generateWorld() {
             }
 
             // Balustrades for Escalator DOWN A (Right side, X from SETTINGS.corridorWidth to SETTINGS.corridorWidth + escalatorWidth)
-            const startDownBalustrade = new THREE.Vector3(SETTINGS.corridorWidth + SETTINGS.escalatorWidth / 2, currentFloorTopY-floorDepth/2, totalCorridorLength + 3.5);
-            const endDownBalustrade = new THREE.Vector3(SETTINGS.corridorWidth + SETTINGS.escalatorWidth / 2, lowerFloorTopY-floorDepth, totalCorridorLength + SETTINGS.escalatorLength + 4 );
+            const startDownBalustrade = new THREE.Vector3(SETTINGS.corridorWidth + SETTINGS.escalatorWidth / 2, floorY - floorDepth/2, totalCorridorLength + 3.5);
+            const endDownBalustrade = new THREE.Vector3(SETTINGS.corridorWidth + SETTINGS.escalatorWidth / 2, (i - 1) * SETTINGS.floorHeight - floorDepth, totalCorridorLength + SETTINGS.escalatorLength + 4 );
             const dirDownBalustrade = new THREE.Vector3().subVectors(endDownBalustrade, startDownBalustrade);
             const lengthDownBalustrade = dirDownBalustrade.length();
             const centerPosDownBalustrade = new THREE.Vector3().addVectors(startDownBalustrade, endDownBalustrade).multiplyScalar(0.5);
@@ -2772,12 +2867,12 @@ function generateWorld() {
             // Balustrades for Escalators in Wing-B ////////////////////// BBBBBBB
             // Balustrades for Escalator B UP (Left side, X from -escalatorWidth to 0)
             const startUpBalustradeB = new THREE.Vector3(
-                - (SETTINGS.escalatorWidth / 2), 
-                lowerFloorTopY-floorDepth, 
+                - (SETTINGS.escalatorWidth / 2),
+                (i - 1) * SETTINGS.floorHeight - floorDepth,
                 -16 - totalCorridorLength - SETTINGS.escalatorLength - 4 
             );
             const endUpBalustradeB = new THREE.Vector3(- (SETTINGS.escalatorWidth / 2), 
-                currentFloorTopY-floorDepth/2, 
+                floorY - floorDepth/2,
                 -16 -totalCorridorLength - 3.5);
             const dirUpBalustradeB = new THREE.Vector3().subVectors(endUpBalustradeB, startUpBalustradeB);
             const lengthUpBalustradeB = dirUpBalustradeB.length();
@@ -2835,12 +2930,12 @@ function generateWorld() {
 
             // Balustrades for Escalator DOWN B (Right side, X from SETTINGS.corridorWidth to SETTINGS.corridorWidth + escalatorWidth)
             const startDownBalustradeB = new THREE.Vector3(
-                SETTINGS.corridorWidth + SETTINGS.escalatorWidth / 2, 
-                currentFloorTopY-floorDepth/2, 
+                SETTINGS.corridorWidth + SETTINGS.escalatorWidth / 2,
+                floorY - floorDepth/2,
                 -16 - totalCorridorLength - 3.5);
             const endDownBalustradeB = new THREE.Vector3(
-                SETTINGS.corridorWidth + (SETTINGS.escalatorWidth / 2), 
-                lowerFloorTopY-floorDepth, 
+                SETTINGS.corridorWidth + (SETTINGS.escalatorWidth / 2),
+                (i - 1) * SETTINGS.floorHeight - floorDepth,
                 -16 - totalCorridorLength - SETTINGS.escalatorLength - 4 );
             const dirDownBalustradeB = new THREE.Vector3().subVectors(endDownBalustradeB, startDownBalustradeB);
             const lengthDownBalustradeB = dirDownBalustradeB.length();
@@ -3144,65 +3239,43 @@ function createRoomLamp(x, y, z, floorIndex, roomId, baseBulbMaterial) {
     }; // The return lightGroup was added in the previous step, ensure it's still here.
     return lightGroup;
 }
-// --- Helper function to create an outer wall with a window ---
-function createOuterWallWithWindow(centerX, centerY, centerZ, segmentLength, wallHeight, wallThickness, wallMat, initialWindowMat, transparentWindowMat, roomId) {
-    const WINDOW_WIDTH_RATIO = 0.7;
-    const WINDOW_HEIGHT_RATIO = 0.6;
-    const WINDOW_SILL_RATIO = 0.2; // of wallHeight
-
+// --- Helper function to create outer wall pillars and window for a segment ---
+function createOuterWall_SegmentFeatures(wallPlaneX, segmentCenterZ, segmentLength, floorY, wallHeight, wallThickness, wallMat, initialWindowMat, transparentWindowMat, roomId) {
+    // These constants are now defined globally or near SETTINGS
     const windowW = segmentLength * WINDOW_WIDTH_RATIO;
     const windowH = wallHeight * WINDOW_HEIGHT_RATIO;
     const sillH = wallHeight * WINDOW_SILL_RATIO;
-    const headerH = wallHeight - windowH - sillH;
-    // pillarW is the width of the wall section next to the window, along the Z-axis for this wall configuration
+    // const headerH = wallHeight - windowH - sillH; // Not needed here anymore
+
     const pillarW = (segmentLength - windowW) / 2;
 
-    // 1. Sill (below window)
-    if (sillH > 0.01) {
-        const sillGeo = new THREE.BoxGeometry(wallThickness, sillH, segmentLength); // X, Y, Z dimensions
-        const sill = new THREE.Mesh(sillGeo, wallMat);
-        sill.position.set(centerX, centerY - (wallHeight / 2) + (sillH / 2), centerZ);
-        sill.castShadow = true; sill.receiveShadow = true;
-        scene.add(sill); worldObjects.push(sill); // These are structural, not part of roomContents
-        sill.name = `OuterWallSill_${roomId}`;
-    }
-
-    // 2. Header (above window)
-    if (headerH > 0.01) {
-        const headerGeo = new THREE.BoxGeometry(wallThickness, headerH, segmentLength); // X, Y, Z dimensions
-        const header = new THREE.Mesh(headerGeo, wallMat);
-        header.position.set(centerX, centerY + (wallHeight / 2) - (headerH / 2), centerZ);
-        header.castShadow = true; header.receiveShadow = true;
-        scene.add(header); worldObjects.push(header); // Structural
-        header.name = `OuterWallHeader_${roomId}`;
-    }
-
     // Y position for the center of the window section (pillars and glass)
-    const windowSectionY = centerY - (wallHeight / 2) + sillH + (windowH / 2);
+    // This is the Y center of the actual window opening area.
+    const windowSectionCenterY = floorY + sillH + (windowH / 2);
 
-    // 3. Left Pillar (beside window, smaller Z value)
+    // 1. Left Pillar (beside window, smaller Z value for this segment)
     if (pillarW > 0.01) {
         const pillarLGeo = new THREE.BoxGeometry(wallThickness, windowH, pillarW); // X, Y, Z dimensions
         const pillarL = new THREE.Mesh(pillarLGeo, wallMat);
-        pillarL.position.set(centerX, windowSectionY, centerZ - (segmentLength / 2) + (pillarW / 2));
+        pillarL.position.set(wallPlaneX, windowSectionCenterY, segmentCenterZ - (segmentLength / 2) + (pillarW / 2));
         pillarL.castShadow = true; pillarL.receiveShadow = true;
         scene.add(pillarL); worldObjects.push(pillarL); // Structural
-        pillarL.name = `OuterWallPillarL_${roomId}`;
+        pillarL.name = `OuterWallPillarL_Seg_${roomId}`;
 
-        // 4. Right Pillar (beside window, larger Z value)
+        // 2. Right Pillar (beside window, larger Z value for this segment)
         const pillarRGeo = new THREE.BoxGeometry(wallThickness, windowH, pillarW); // X, Y, Z dimensions
         const pillarR = new THREE.Mesh(pillarRGeo, wallMat);
-        pillarR.position.set(centerX, windowSectionY, centerZ + (segmentLength / 2) - (pillarW / 2));
+        pillarR.position.set(wallPlaneX, windowSectionCenterY, segmentCenterZ + (segmentLength / 2) - (pillarW / 2));
         pillarR.castShadow = true; pillarR.receiveShadow = true;
         scene.add(pillarR); worldObjects.push(pillarR); // Structural
-        pillarR.name = `OuterWallPillarR_${roomId}`;
+        pillarR.name = `OuterWallPillarR_Seg_${roomId}`;
     }
 
-    // 5. Window Glass Pane
+    // 3. Window Glass Pane for this segment
     if (windowW > 0.01 && windowH > 0.01) {
         const glassGeo = new THREE.BoxGeometry(wallThickness * 0.25, windowH, windowW);
         const glass = new THREE.Mesh(glassGeo, initialWindowMat); // Use initial material
-        glass.position.set(centerX, windowSectionY, centerZ);
+        glass.position.set(wallPlaneX, windowSectionCenterY, segmentCenterZ);
         glass.castShadow = false;
         glass.receiveShadow = true;
         // Mark as breakable window
@@ -3267,6 +3340,7 @@ function onKeyDown(event) {
         case 'KeyJ': callElevator(-1); break;
         case 'KeyE': interact(); break;
         case 'KeyF': pickUpLampshade(); break; // Add pickup action
+        case 'KeyP': toggleWireframeView(); break; // Toggle wireframe view
     }
 }
 
@@ -3285,6 +3359,21 @@ function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+// --- Wireframe Toggle ---
+function toggleWireframeView() {
+    isWireframeView = !isWireframeView;
+    scene.traverse(function (object) {
+        if (object.isMesh) {
+            if (Array.isArray(object.material)) {
+                object.material.forEach(mat => mat.wireframe = isWireframeView);
+            } else if (object.material) {
+                object.material.wireframe = isWireframeView;
+            }
+        }
+    });
+    console.log(`Wireframe view ${isWireframeView ? 'enabled' : 'disabled'}`);
 }
 
 // --- Game Logic ---
@@ -4164,13 +4253,22 @@ function updatePlayer(deltaTime) {
     const speed = (isSprinting ? SETTINGS.playerSpeed * SETTINGS.sprintMultiplier : SETTINGS.playerSpeed) * deltaTime;
     const cameraObject = controls.getObject(); // This is the holder for the camera
 
+    // Player movement on escalator steps is now handled by calculateEscalatorBoost
+    const escalatorResult = calculateEscalatorBoost( // This function directly moves the player on steps
+        cameraObject, 
+        escalatorSteps, escalatorStarts, escalatorEnds, 
+        escalatorStepsB, escalatorStartsB, escalatorEndsB, 
+        SETTINGS, deltaTime, playerHeight
+    );
+
     // Apply gravity
-    if (!playerOnGround) {
+    // Allow escalator vertical movement to override gravity if player is on an active step
+    if (!playerOnGround && !(escalatorResult && escalatorResult.onEscalator)) {
         playerVelocity.y += SETTINGS.gravity * deltaTime;
     }
 
     // Calculate movement direction based on camera orientation
-    const moveDirection = new THREE.Vector3();
+    const moveDirection = new THREE.Vector3(); // Player's input movement
     if (moveForward) moveDirection.z = -1;
     if (moveBackward) moveDirection.z = 1;
     if (moveLeft) moveDirection.x = -1;
@@ -4179,23 +4277,21 @@ function updatePlayer(deltaTime) {
     moveDirection.normalize(); // Ensure consistent speed diagonally
     moveDirection.applyEuler(cameraObject.rotation); // Apply camera rotation (Y-axis mainly for FPS)
 
-    // Player movement on escalator steps is now handled by calculateEscalatorBoost
-    const escalatorResult = calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorStarts, escalatorEnds, escalatorStepsB, escalatorStartsB, escalatorEndsB, SETTINGS, deltaTime, playerHeight);
-    const escalatorBoostVector = escalatorResult.boost; // This is (0,0,0) if direct movement is applied by calcEscBoost
-
     if (escalatorResult.disembarkedDown) {
         playerVelocity.y = SETTINGS.jumpVelocity * 0.25; // Small upward pop (adjust multiplier as needed, e.g., 0.2 to 0.3)
         playerOnGround = false; // Allow the pop to happen
     }
 
-    const deltaX = moveDirection.x * speed;
-    const deltaZ = moveDirection.z * speed;
-    // const boostX = escalatorBoostVector.x; // If escalatorBoostVector was a pre-calculated delta
-    // const boostZ = escalatorBoostVector.z; // If escalatorBoostVector was a pre-calculated delta
-    // Since calculateEscalatorBoost directly moves the player or handles dismount,
-    // the returned 'boost' vector is (0,0,0) and doesn't need to be applied again here for XZ.
-    const totalDeltaX = deltaX; // + boostX;
-    const totalDeltaZ = deltaZ; // + boostZ;
+    // If calculateEscalatorBoost handled movement (returned onEscalator: true),
+    // player input movement (deltaX, deltaZ) is for off-escalator or additive movement.
+    // Since calculateEscalatorBoost directly modifies cameraObject.position,
+    // we only apply player input movement if not actively on an escalator step.
+    let totalDeltaX = 0;
+    let totalDeltaZ = 0;
+    if (!escalatorResult.onEscalator) {
+        totalDeltaX = moveDirection.x * speed;
+        totalDeltaZ = moveDirection.z * speed;
+    }
 
     // --- Basic Collision Detection (Simple - Check X and Z separately) ---
     // Store original position
@@ -4305,7 +4401,7 @@ function updatePlayer(deltaTime) {
                 });
             } else if (wingThisFrame === 'B' && escalatorStepsB[typeThisFrame] && escalatorStepsB[typeThisFrame][floorThisFrame]) {
                 escalatorStepsB[typeThisFrame][floorThisFrame].forEach(step => {
-                    step.material = window.EscalatorEmbarkMaterial;
+                    step.material = window.EscalatorEmbarkMaterialB; // Use B-Wing specific material
                 });
             }
         }
@@ -4593,7 +4689,8 @@ function animate() {
         updateLODSystem();
         animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalatorStepsB, escalatorStarts, escalatorStartsB, escalatorEnds, escalatorEndsB, SETTINGS, {
             escalatorMaterial: window.EscalatorMaterial,
-            escalatorEmbarkMaterial: window.EscalatorEmbarkMaterial
+            escalatorEmbarkMaterial: window.EscalatorEmbarkMaterial,
+            escalatorEmbarkMaterialB: window.EscalatorEmbarkMaterialB // Pass B-Wing material
         });
 
         // --- Animate Room Lights ---
