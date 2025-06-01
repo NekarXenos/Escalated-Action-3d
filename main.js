@@ -35,6 +35,7 @@ const SETTINGS = {
 
 // --- Core Variables ---
 let scene, camera, renderer, controls;
+let playerBox; // Added: Global player's collision box
 let clock;
 let playerVelocity = new THREE.Vector3();
 let playerOnGround = false;
@@ -3087,17 +3088,18 @@ function generateWorld() {
     }
 
     // Initial camera position relative to the active elevator
-    if (activeElevator) {
-        camera.position.set(
-            activeElevator.platform.position.x,
-            activeElevator.platform.position.y + playerHeight + 0.2, // Start slightly above the elevator platform
-            activeElevator.platform.position.z + 0.1 // Start slightly inside the corridor from elevator
-        );
-    } else { // Fallback if no elevators created (should not happen with current setup)
-        camera.position.set(SETTINGS.corridorWidth / 2, playerHeight, 0);
-    }
-
-    // Rotate the camera to look down the hallway
+    // if (activeElevator) { // OLD LOGIC
+    //     camera.position.set(
+    //         activeElevator.platform.position.x,
+    //         activeElevator.platform.position.y + playerHeight + 0.2, // Start slightly above the elevator platform
+    //         activeElevator.platform.position.z + 0.1 // Start slightly inside the corridor from elevator
+    //     );
+    // } else { // Fallback if no elevators created (should not happen with current setup)
+    //     camera.position.set(SETTINGS.corridorWidth / 2, playerHeight, 0);
+    // }
+    // NEW: Set player start position explicitly on the roof level, at X=corridorWidth/2, Z=0, facing -Z
+    const startRoofY = SETTINGS.numFloors * SETTINGS.floorHeight;
+    camera.position.set(SETTINGS.corridorWidth / 2, startRoofY + playerHeight, -16);
     controls.getObject().rotation.y = Math.PI; // Rotate 180 degrees (facing opposite direction
 }); // End of fontLoader.load callback
 } // End of generateWorld function
@@ -3910,17 +3912,16 @@ function createBulletHole(position, normal) {
 }
 
 function destroyLight(lightGroup) {
-    if (lightGroup.userData.isDestroyed) return;
+        if (lightGroup.userData.isDestroyed) return;
 
     lightGroup.userData.isDestroyed = true;
-    playerScore += 10; // Award 10 points
+    playerScore += 10; 
     updateUI();
 
-    // Temporarily increase light intensity
     if (lightGroup.userData.pointLight) {
-        lightGroup.userData.pointLight.intensity *= 10; // Flash
+        lightGroup.userData.pointLight.intensity *= 10; 
         setTimeout(() => {
-            lightGroup.userData.pointLight.intensity = 0; // Turn off after flash
+            lightGroup.userData.pointLight.intensity = 0; 
             if (!lightGroup.userData.isRoomLight) { // Only disable corridor lights if it was a corridor light
                 disableCorridorLights(lightGroup.userData.floorIndex);
             } else {
@@ -3957,7 +3958,11 @@ function destroyLight(lightGroup) {
     // Drop the lampshade
     const lampshade = lightGroup.children.find(child => child.geometry instanceof THREE.ConeGeometry);
     if (lampshade) {
-        dropLampshade(lampshade);
+        // Store necessary info before detaching
+        lampshade.userData.floorIndex = lightGroup.userData.floorIndex; // Pass floor index
+        lampshade.userData.originalLightId = lightGroup.id; // Optional: for debugging
+        
+        dropLampshade(lampshade); // Call the modified dropLampshade
     }
 }
 
@@ -4023,105 +4028,176 @@ function breakLightBulb(bulb) {
 }
 
 function dropLampshade(lampshade) {
-    const worldPosition = new THREE.Vector3();
-    lampshade.getWorldPosition(worldPosition);
+    const originalLightPosition = new THREE.Vector3();
+    lampshade.getWorldPosition(originalLightPosition); // Capture where the light was
 
     if (lampshade.parent) {
-        lampshade.parent.remove(lampshade);
+        lampshade.parent.remove(lampshade); // Detach from original light group
     }
-    scene.add(lampshade);
-    lampshade.position.copy(worldPosition);
+    scene.add(lampshade); // Add to scene to manage its fall independently
+    lampshade.position.copy(originalLightPosition); // Start falling from original light position
 
-    if (!lampshade.geometry.boundingBox) { // Ensure bounding box exists for height calculation
+    if (!lampshade.geometry.boundingBox) {
         lampshade.geometry.computeBoundingBox();
     }
-    // Calculate lampshade height based on its local bounding box.
-    // This assumes the lampshade's origin is at its visual center.
-    const lampshadeHeight = lampshade.geometry.boundingBox.max.y - lampshade.geometry.boundingBox.min.y;
+    // lampshadeHeight is the actual height of the cone geometry
+    const lampshadeHeight = lampshade.geometry.parameters.height; // For ConeGeometry, this is reliable
 
-    const fallAmountPerStep = 0.1; // Tunable: how much the lampshade moves down each interval.
-                                   // 0.1 units per 33ms step is approx. 3 units per second.
+    const lightFloorIndex = lampshade.userData.floorIndex; // Assumes floorIndex is stored
+    const floorYPosition = lightFloorIndex * SETTINGS.floorHeight;
 
-    const interval = setInterval(() => {
-        lampshade.position.y -= fallAmountPerStep; // Move down by a fixed amount
+    let hitPlayerTarget = null;
 
-        // Check for collision with floors or entities
-        const lampshadeBox = new THREE.Box3().setFromObject(lampshade); // Update bounding box after move
+    // --- 1. Direct Hit Check for Player ONLY (Optional, for instant hit feel) ---
+    const lightXZPos = new THREE.Vector2(originalLightPosition.x, originalLightPosition.z);
+    const playerCameraPos = controls.getObject().position;
+    const playerXZPos = new THREE.Vector2(playerCameraPos.x, playerCameraPos.z);
 
-        // Check collision with player
-        const playerCameraPos = controls.getObject().position;
-        // Approximate player's body center for collision
-        const playerBodyCenterY = playerCameraPos.y - playerHeight / 2;
-        const playerCollisionBox = new THREE.Box3().setFromCenterAndSize(
-            new THREE.Vector3(playerCameraPos.x, playerBodyCenterY, playerCameraPos.z),
-            new THREE.Vector3(0.5, playerHeight, 0.5) // Width, Height, Depth of player collision
-        );
-        if (lampshadeBox.intersectsBox(playerBox)) {
-            applyDamageToPlayer(50); // 50% damage
-            clearInterval(interval);
-            scene.remove(lampshade); // Remove lampshade after collision
+    // Check if player is directly under the light when it starts falling
+    if (playerXZPos.distanceTo(lightXZPos) < 0.7) { // Reduced radius for more direct hit
+        const playerTopY = playerCameraPos.y; // Player's camera Y (head)
+        const playerBottomY = playerCameraPos.y - playerHeight;
+        // If the light fixture was roughly at head level or just above
+        if (originalLightPosition.y > playerBottomY && originalLightPosition.y < playerTopY + lampshadeHeight + 0.3) {
+            hitPlayerTarget = { type: 'player', object: controls.getObject(), hitY: playerTopY };
+        }
+    }
+
+    if (hitPlayerTarget) {
+        // Place lampshade on player and apply damage
+        lampshade.position.set(hitPlayerTarget.object.position.x, hitPlayerTarget.hitY - playerHeight + lampshadeHeight/2 , hitPlayerTarget.object.position.z); // Position on player's actual head
+        applyDamageToPlayer(25); // Damage amount for player
+        console.log("Lampshade hit player directly.");
+        // Player wears it as a hat, make it non-pickable to avoid immediate re-pickup
+        lampshade.userData.isPickable = false;
+        // To make it fall off after a while or be a temporary effect, more logic would be needed here.
+        // For now, it stays as a hat and the fall animation is skipped.
+        return;
+    }
+
+    // --- 2. Lampshade Falls and Hits Floor/Enemy ---
+    // Target Y for the center of the lampshade to rest on the floor
+    const targetFloorY = floorYPosition + lampshadeHeight / 2;
+    let animationComplete = false;
+
+    const fallInterval = setInterval(() => {
+        if (animationComplete) {
+            clearInterval(fallInterval);
             return;
         }
 
-        // Check collision with enemies
+        lampshade.position.y -= 0.15; // Fall speed
+
+        let lampshadeBox;
+        try {
+            lampshadeBox = new THREE.Box3().setFromObject(lampshade);
+            if (!lampshadeBox.min || !lampshadeBox.max || lampshadeBox.isEmpty()) {
+                // console.warn("LampshadeBox became invalid during fall, removing lampshade.");
+                clearInterval(fallInterval);
+                scene.remove(lampshade);
+                return;
+            }
+        } catch(e) {
+            // console.error("Error creating lampshadeBox during fall, removing lampshade.", e);
+            clearInterval(fallInterval);
+            scene.remove(lampshade);
+            return;
+        }
+
+        // Check collision with enemies first
         for (let i = enemies.length - 1; i >= 0; i--) {
             const enemy = enemies[i];
-            // Ensure enemy has geometry and it's loaded enough for a bounding box
-            if (!enemy.geometry || !enemy.geometry.boundingBox) {
-                continue;
-            }
-            const enemyBox = new THREE.Box3().setFromObject(enemy); // Use setFromObject for dynamic enemy poses
+            let enemyBox;
+            try {
+                enemyBox = new THREE.Box3().setFromObject(enemy);
+                if (!enemyBox.min || !enemyBox.max || enemyBox.isEmpty()) continue;
+            } catch(e) { continue; }
 
             if (lampshadeBox.intersectsBox(enemyBox)) {
-                console.log("Lampshade hit enemy:", enemy.name);
-                playerScore += 150; // Award points for lampshade kill
-                updateUI();
+                const enemyTopY = enemy.position.y + ENEMY_SETTINGS.height / 2;
+                const lampshadeBottomY = lampshade.position.y - lampshadeHeight / 2;
 
-                // Remove enemy
-                scene.remove(enemy);
-                const indexInWorldObjects = worldObjects.indexOf(enemy);
-                if (indexInWorldObjects > -1) {
-                    worldObjects.splice(indexInWorldObjects, 1);
+                // Condition: Lampshade's bottom is at or slightly above the enemy's head,
+                // and below a certain threshold above the head (to count as a "landing on" hit)
+                // and also above the enemy's base to ensure it's a top-down hit.
+                if (lampshadeBottomY <= enemyTopY + 0.1 && lampshadeBottomY >= enemy.position.y) {
+                    console.log("Lampshade hit and destroyed enemy during fall:", enemy.name);
+                    playerScore += 150;
+                    updateUI();
+
+                    scene.remove(enemy);
+                    const worldObjIndex = worldObjects.indexOf(enemy);
+                    if (worldObjIndex > -1) worldObjects.splice(worldObjIndex, 1);
+                    enemies.splice(i, 1); // Remove from enemies array
+
+                    scene.remove(lampshade); // Destroy lampshade
+                    animationComplete = true;
+                    clearInterval(fallInterval);
+                    return; // Exit interval callback
                 }
-                enemies.splice(i, 1);
-
-                clearInterval(interval); // Stop lampshade falling
-                scene.remove(lampshade); // Remove lampshade after collision
-                return; // Exit early as lampshade is consumed
             }
         }
 
-        // Check collision with static world objects (floors, furniture)
+        if (animationComplete) return; // If an enemy was hit and destroyed
+
+        // Then check collision with other world objects (for landing on floor/surfaces)
         for (const object of worldObjects) {
-            if (object === lampshade || object.userData.type === 'projectile' || !object.geometry || !object.geometry.boundingBox) {
-                continue; // Skip self, projectiles, or objects without required properties
+            if (object === lampshade || object.userData.type === 'projectile' || !object.visible || !(object.isMesh || object.isGroup) || enemies.includes(object)) {
+                continue; // Skip self, projectiles, invisible, non-collidable, or already handled enemies
+            }
+            if (object.isGroup && object.children.length === 0) {
+                continue;
             }
 
-            // Assuming object.geometry.boundingBox is in local space. Apply world matrix.
-            const objectBox = new THREE.Box3().copy(object.geometry.boundingBox).applyMatrix4(object.matrixWorld);
+            let objectBox;
+            try {
+                // Ensure the object is valid for bounding box calculation
+                if (object.geometry || (object.isGroup && object.children.length > 0)) {
+                    objectBox = new THREE.Box3().setFromObject(object);
+                    if (!objectBox.min || !objectBox.max || objectBox.isEmpty()) continue;
+                } else {
+                    continue;
+                }
+            } catch (e) {
+                // console.error("Error computing bounding box for object during fall:", object.name, e);
+                continue;
+            }
 
             if (lampshadeBox.intersectsBox(objectBox)) {
-                // Collision detected. Position lampshade so its bottom rests on top of the object.
-                // lampshade.position.y is the center of the lampshade.
-                // We want lampshade's bottom (center_y - height/2) to be objectBox.max.y
-                // So, new_center_y = objectBox.max.y + height/2
-                lampshade.position.y = objectBox.max.y + (lampshadeHeight / 2);
-                
-                // console.log(`Lampshade collided with ${object.name}. Landed at Y: ${lampshade.position.y.toFixed(2)} on object top Y: ${objectBox.max.y.toFixed(2)}`);
-                clearInterval(interval);
-                return; // Stop falling
+                // Check if the lampshade is landing on top of this object
+                // The lampshade's bottom should be close to the object's top
+                const lampshadeBottomY = lampshade.position.y - lampshadeHeight / 2;
+                if (lampshadeBottomY <= objectBox.max.y + 0.05 && lampshadeBottomY >= objectBox.max.y - 0.15) { // Small tolerance for landing
+                    lampshade.position.y = objectBox.max.y + lampshadeHeight / 2;
+                    animationComplete = true;
+                    lampshade.userData.isPickable = true;
+                    // console.log(`Lampshade landed on ${object.name}.`);
+                    break;
+                }
             }
         }
 
-        // Fallback: If lampshade falls out of the world
-        if (lampshade.position.y < -50) { // Arbitrary "void" Y level, adjust as needed
-            clearInterval(interval);
-            scene.remove(lampshade);
+        // Land on target floor if no other collision stops it earlier
+        if (!animationComplete && lampshade.position.y <= targetFloorY) {
+            lampshade.position.y = targetFloorY;
+            animationComplete = true;
+            lampshade.userData.isPickable = true;
+            // console.log(`Lampshade landed on target floor ${lightFloorIndex}.`);
         }
-    }, 33); // Interval remains 33ms
+
+        if (animationComplete) {
+            clearInterval(fallInterval);
+            return;
+        }
+
+        if (lampshade.position.y < -50) { // Fell out of world
+            // console.warn("Lampshade fell out of world and was removed.");
+            animationComplete = true;
+            scene.remove(lampshade);
+            clearInterval(fallInterval);
+        }
+    }, 33); // approx 30 FPS for this animation
 }
-
-
 
 function pickUpLampshade() {
     if (!controls.isLocked) return;
