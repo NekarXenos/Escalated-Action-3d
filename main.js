@@ -608,7 +608,7 @@ function generateWorld() {
     const basementWallMaterial = new THREE.MeshStandardMaterial({ color: 0x656565, roughness: 0.8 });
     const EscalatorEmbarkMaterial = new THREE.MeshStandardMaterial({ color: 0x332222,  metalness: 0.8, roughness: 0.5, emissive: 0x110000, emissiveIntensity: 0.1 }); // Added emissive property
     const garageDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x909090, metalness: 0.6, roughness: 0.5 });
-    const EscalatorEmbarkMaterialB = new THREE.MeshStandardMaterial({ color: 0xDD8800,  metalness: 0.8, roughness: 0.5, emissive: 0x442200, emissiveIntensity: 0.1 }); // Dark Orange for B-Wing
+    const EscalatorEmbarkMaterialB = new THREE.MeshStandardMaterial({ color: 0x332211,  metalness: 0.8, roughness: 0.5, emissive: 0x080400, emissiveIntensity: 0.1 }); // Dark Orange for B-Wing
 
     // Store references globally for use in updatePlayer
     window.EscalatorMaterial = EscalatorMaterial;
@@ -2633,10 +2633,10 @@ function generateWorld() {
             // --- End of A-Wing Escalators ---   AAAAAAAA
 
             // B-Wing Escalators /////// BBBBBBBBBBBBBB
-            // ---  B-Wing Left  side Escalator B down Starting Point (RED) ---
+            // ---  B-Wing RIGHT  side Escalator B down Starting Point (Orange) - (Was LEFT) ---
             const startEscDownGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1); // <-- Add this line
             const startEscDownB = new THREE.Mesh(startEscDownGeoB, window.EscalatorEmbarkMaterialB);
-            startEscDownB.name = `Left Escalator Down Start B ${i}`;
+            startEscDownB.name = `Right Escalator Down Start B ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             startEscDownB.position.set(
                 - (escalatorWidth / 2) - 0.1,
@@ -2652,9 +2652,9 @@ function generateWorld() {
             // Track stepDown for this floor
             escalatorStepsB.down[i] = [];
 
-            // ---  B-Wing Steps DOWN (LEFT side) --- 
+            // ---  B-Wing Steps DOWN  -Right side (Was Left) --- 
             for (let s = 0; s < stepCount; s++) {
-                const y = floorY -.01 - (s + 1) * stepHeight + stepHeight / 2;
+                const y = floorY -.01 - ((s + 1) * stepHeight ) + stepHeight / 2;
                 const zB = -16 - totalCorridorLength - 4.3 - (s / stepCount) * SETTINGS.escalatorLength;
                 const stepGeoB = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
                 const stepDownB = new THREE.Mesh(stepGeoB, window.EscalatorMaterial);
@@ -2665,17 +2665,17 @@ function generateWorld() {
                 );
                 stepDownB.castShadow = true;
                 stepDownB.receiveShadow = true;
-                stepDownB.name = `Left Escalator Step Down B ${i}-${s}`;
+                stepDownB.name = `Right Escalator Step Down B ${i}-${s}`;
                 scene.add(stepDownB);
                 worldObjects.push(stepDownB); // Track stepDown
                 escalatorStepsB.down[i].push(stepDownB); // Track stepDown
             }
 
-            //  B-Wing Escalator Down on lower floor Ending Point (Left side    )    
+            //  B-Wing Escalator Down on lower floor Ending Point - Right side ( was Left side    )    
             const endEscDownGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             
             const endEscDownB = new THREE.Mesh(endEscDownGeoB, window.EscalatorMaterial);
-            endEscDownB.name = `Left Escalator Down End B ${i}`;
+            endEscDownB.name = `Right Escalator Down End B ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             endEscDownB.position.set(
                 - (escalatorWidth / 2) - 0.1,
@@ -2689,10 +2689,10 @@ function generateWorld() {
             escalatorEndsB.down[i] = endEscDownB;
             // ---  B-Wing End of Left side Escalator Down on lower floor Ending Point --- ///
 
-            // ---  B-Wing  Right side Escalator going Up on Lower floor Starting Point (RED) ---
+            // ---  B-Wing  LEFT side Escalator going Up on Lower floor Starting Point (Organge) (Was Right) ---
             const startEscUpGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             const startEscUpB = new THREE.Mesh(startEscUpGeoB, window.EscalatorEmbarkMaterialB);
-            startEscUpB.name = `Right Escalator Up Start B ${i}`;
+            startEscUpB.name = `Leftt Escalator Up Start B ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             startEscUpB.position.set(
                 SETTINGS.corridorWidth + 0.1 + (escalatorWidth / 2),
@@ -2708,7 +2708,7 @@ function generateWorld() {
             // Track stepUp for this floor
             escalatorStepsB.up[i] = [];
 
-            // --- Steps UP B-Wing (RIGHT side) ---
+            // --- Steps UP B-Wing - Left side (was rigg side) ---
             for (let s = 0; s < stepCount; s++) {
                 //const y = floorY - (stepCount - s) * stepHeight + stepHeight / 2;
                 const y = floorY + 0.01 - (s + 1) * stepHeight + stepHeight / 2;
@@ -2722,7 +2722,7 @@ function generateWorld() {
                 );
                 stepUpB.castShadow = true;
                 stepUpB.receiveShadow = true;
-                stepUpB.name = `Right Escalator Step Up B ${i}-${s}`;
+                stepUpB.name = `Left Escalator Step Up B ${i}-${s}`;
                 scene.add(stepUpB);
                 worldObjects.push(stepUpB);
                 escalatorStepsB.up[i].push(stepUpB); // Track stepUp
@@ -2731,7 +2731,7 @@ function generateWorld() {
             // Escalator B-Wing Up from lower floor Ending Point    
             const endEscUpGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             const endEscUpB = new THREE.Mesh(endEscUpGeoB, window.EscalatorMaterial);
-            endEscUpB.name = `Right Escalator Up End B ${i}`;
+            endEscUpB.name = `Left Escalator Up End B ${i}`;
             //start1Esc.rotation.x = -Math.PI / 2;
             endEscUpB.position.set(
                 SETTINGS.corridorWidth + 0.1 + (escalatorWidth / 2),
@@ -4994,29 +4994,29 @@ function animate() {
             const hitObject = hit.object;
             const objName = hitObject.name || "Unnamed";
 
-            // Check if the player is over "Right Escalator Up..." or "Left Escalator Down..."
-            if (objName.startsWith("Right Escalator Up")) {
+            // Check if the player is over "Escalator Up..." or "Escalator Down..."
+            if (objName.includes("Escalator Up Start")) {
                 const floorIndex = parseInt(objName.match(/\d+/)[0]); // Extract floor index
                 escalatorSteps.up[floorIndex].forEach(step => {
                     step.material = window.EscalatorEmbarkMaterial; // Change material
                 });
                 escalatorStepsB.up[floorIndex].forEach(step => {
-                    step.material = window.EscalatorEmbarkMaterial; // Change material
+                    step.material = window.EscalatorEmbarkMaterialB; // Change material
                 });
-            } else if (objName.startsWith("Left Escalator Down")) {
+            } else if (objName.includes("Escalator Down Start")) {
                 const floorIndex = parseInt(objName.match(/\d+/)[0]); // Extract floor index
                 escalatorSteps.down[floorIndex].forEach(step => {
                     step.material = window.EscalatorEmbarkMaterial; // Change material
                 });
                 escalatorStepsB.down[floorIndex].forEach(step => {
-                    step.material = window.EscalatorEmbarkMaterial; // Change material
+                    step.material = window.EscalatorEmbarkMaterialB; // Change material
                 });
             }
 
             // Reset step materials if above "Left Escalator Down End...", "Right Escalator Up End...", or any floor object
             if (
-                objName.startsWith("Left Escalator Down End") || 
-                objName.startsWith("Right Escalator Up End") || 
+                objName.includes("Escalator Down End") || 
+                objName.includes("Escalator Up End") || 
                 objName.includes("Floor") // Check if "Floor" is anywhere in the name
             ) {
                 for (const steps of Object.values(escalatorSteps.up)) {
