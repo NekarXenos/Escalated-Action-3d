@@ -879,15 +879,15 @@ let aWingBalustradeTemplate = null;
 let bWingBalustradeTemplate = null;
 
 function createBalustradeTemplate(balustradeHeight, balustradeThickness, length, material) {
-	// Creates a group with an inner and an outer balustrade of the given dimensions.
-	const group = new THREE.Group();
-	const innerGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, length);
-	const outerGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, length);
-	const innerMesh = new THREE.Mesh(innerGeo, material);
-	innerMesh.name = 'InnerBalustrade';
-	const outerMesh = new THREE.Mesh(outerGeo, material);
-	outerMesh.name = 'OuterBalustrade';
-	group.add(innerMesh);
-	group.add(outerMesh);
-	return group;
+    // Creates a group with an inner and an outer balustrade of the given dimensions.
+    const group = new THREE.Group();
+    const innerGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, length);
+    const outerGeo = new THREE.BoxGeometry(balustradeThickness, balustradeHeight, length);
+    const innerMesh = new THREE.Mesh(innerGeo, material);
+    innerMesh.name = 'InnerBalustrade';
+    const outerMesh = new THREE.Mesh(outerGeo, material);
+    outerMesh.name = 'OuterBalustrade';
+    group.add(innerMesh);
+    group.add(outerMesh);
+    return group;
 }
