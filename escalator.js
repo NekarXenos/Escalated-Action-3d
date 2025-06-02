@@ -264,14 +264,14 @@ export function createEscalatorsForFloor(config) {
             escalatorEnds.up[floorIndex] = translatedEndEscUp;
 
             // --- B-Wing Escalators (-Z direction) //////////////////////////////////////////////
-            // --- Wing B RIGHT side Escalator down Starting Point (RED) --- (Was Left)
+            // --- Wing B RIGHT side Escalator down Starting Point (orange) --- (Was Left)
             const startEscDownBRGeo = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
-            const startEscDownBR = new THREE.Mesh(startEscDownBRGeo, materials.escalatorEmbarkMaterial);
-            startEscDownBR.name = `Right B Escalator Down Start ${floorIndex}`;
+            const startEscDownBR = new THREE.Mesh(startEscDownBRGeo, materials.escalatorEmbarkMaterialB);
+            startEscDownBR.name = `Right Escalator Down Start B ${floorIndex}`;
             startEscDownBR.position.set(
                 - (escalatorWidth / 2) - 0.1, // was settings.corridorWidth + (escalatorWidth / 2) + 0.1,
                 floorY - (floorDepth / 2),
-                NegativeZ - totalCorridorLength + 3.5 // was totalCorridorLength + 3.5
+                - totalCorridorLength - 3.5 // was totalCorridorLength + 3.5
             );
             startEscDownBR.receiveShadow = true;
             scene.add(startEscDownBR);
@@ -281,7 +281,7 @@ export function createEscalatorsForFloor(config) {
 
             // --- B-Wing Steps DOWN (RIGHT side) --- // was left
             for (let s = 0; s < stepCount; s++) {
-                const y = floorY - .01 - (s + 1) * stepHeight + stepHeight / 2;
+                const y = floorY - .01 - (s + 1) * stepHeight - stepHeight / 2;
                 const z = NegativeZ - totalCorridorLength - 4.3 - (s / stepCount) * settings.escalatorLength; // was totalCorridorLength + 4.3 + (s / stepCount) * settings.escalatorLength;
                 const stepBGeo = new THREE.BoxGeometry(stepWidth, stepHeight, stepDepth);
                 const stepDownB = new THREE.Mesh(stepBGeo, materials.escalatorMaterial);
@@ -292,7 +292,7 @@ export function createEscalatorsForFloor(config) {
                 );
                 stepDownB.castShadow = true;
                 stepDownB.receiveShadow = true;
-                stepDownB.name = `Right B Escalator Step Down ${floorIndex}-${s}`;
+                stepDownB.name = `Right Escalator Step Down B ${floorIndex}-${s}`;
                 scene.add(stepDownB);
                 worldObjects.push(stepDownB);
                 escalatorStepsB.down[floorIndex].push(stepDownB);
@@ -300,11 +300,11 @@ export function createEscalatorsForFloor(config) {
 
             const endEscDownGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             const endEscDownB = new THREE.Mesh(endEscDownGeoB, materials.escalatorMaterial);
-            endEscDownB.name = `Right B Escalator Down End ${floorIndex}`;
+            endEscDownB.name = `Right Escalator Down End B ${floorIndex}`;
             endEscDownB.position.set(
                 - (escalatorWidth / 2) + 0.1,// was settings.corridorWidth + (escalatorWidth / 2) + 0.1,
                 floorY - settings.floorHeight - (floorDepth / 2),
-                NegativeZ - totalCorridorLength - escalatorLength - 4 - 0.5// was totalCorridorLength + escalatorLength + 4 + 0.5
+                NegativeZ - totalCorridorLength - settings.escalatorLength - 4 - 0.5// was totalCorridorLength + escalatorLength + 4 + 0.5
             );
             endEscDownB.receiveShadow = true;
             scene.add(endEscDownB);
@@ -313,8 +313,8 @@ export function createEscalatorsForFloor(config) {
 
             // --- Wing B LEFT side Escalator going Up on Lower floor Starting Point (RED) --- // Was Right Side
             const startEscUpGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
-            const startEscUpB = new THREE.Mesh(startEscUpGeoB, materials.escalatorEmbarkMaterial);
-            startEscUpB.name = `Left B Escalator Up Start ${floorIndex}`;
+            const startEscUpB = new THREE.Mesh(startEscUpGeoB, materials.escalatorEmbarkMaterialB);
+            startEscUpB.name = `Left Escalator Up Start B ${floorIndex}`;
             startEscUpB.position.set(
                 settings.corridorWidth +0.1 + (escalatorWidth / 2),// was -0.1 - (escalatorWidth / 2),
                 floorY - settings.floorHeight - (floorDepth / 2),
@@ -339,7 +339,7 @@ export function createEscalatorsForFloor(config) {
                 );
                 stepUpB.castShadow = true;
                 stepUpB.receiveShadow = true;
-                stepUpB.name = `Left B Escalator Step Up ${floorIndex}-${s}`;
+                stepUpB.name = `Left Escalator Step Up B ${floorIndex}-${s}`;
                 scene.add(stepUpB);
                 worldObjects.push(stepUpB);
                 escalatorStepsB.up[floorIndex].push(stepUpB);
@@ -347,7 +347,7 @@ export function createEscalatorsForFloor(config) {
 
             const endEscUpGeoB = new THREE.BoxGeometry(escalatorWidth, floorDepth, 1);
             const endEscUpB = new THREE.Mesh(endEscUpGeoB, materials.escalatorMaterial);
-            endEscUpB.name = `Left B Escalator Up End ${floorIndex}`;
+            endEscUpB.name = `Left Escalator Up End B ${floorIndex}`;
             endEscUpB.position.set(
                 settings.corridorWidth + 0.1 + (escalatorWidth / 2),// was -0.1 - (escalatorWidth / 2),
                 floorY - (floorDepth / 3) - 0.08,
@@ -768,6 +768,7 @@ export function calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorS
 export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalatorStepsB, escalatorStarts, escalatorStartsB, escalatorEnds, escalatorEndsB, settings, materials) {
     const escSpeed = settings.escalatorSpeed;
 
+    // A-Wing Down (no changes here, shown for context)
     for (const floor in escalatorSteps.down) {
         const steps = escalatorSteps.down[floor];
         const startMesh = escalatorStarts.down[floor];
@@ -777,17 +778,32 @@ export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalator
             const totalDistance = dir.length();
             dir.normalize();
 
-            steps.forEach(step => {
-                if (step.material === materials.escalatorEmbarkMaterial) {
-                    step.position.addScaledVector(dir, escSpeed * deltaTime); // A-Wing Down
-                    if (step.position.distanceTo(startMesh.position) >= totalDistance) {
-                        step.position.copy(startMesh.position);
+            // Check if steps is an InstancedMesh or an array
+            if (steps instanceof THREE.InstancedMesh) {
+                // Logic for InstancedMesh if you implement it for A-Wing Down as well
+                // This example assumes A-Wing Down still uses individual meshes as per original structure for this part
+                 steps.forEach(step => { // Assuming steps is an array here based on original structure for A-wing
+                    if (step.material === materials.escalatorEmbarkMaterial) {
+                        step.position.addScaledVector(dir, escSpeed * deltaTime);
+                        if (step.position.distanceTo(startMesh.position) >= totalDistance) {
+                            step.position.copy(startMesh.position);
+                        }
                     }
-                }
-            });
+                });
+            } else if (Array.isArray(steps)) { // Original handling for array of steps
+                 steps.forEach(step => {
+                    if (step.material === materials.escalatorEmbarkMaterial) {
+                        step.position.addScaledVector(dir, escSpeed * deltaTime);
+                        if (step.position.distanceTo(startMesh.position) >= totalDistance) {
+                            step.position.copy(startMesh.position);
+                        }
+                    }
+                });
+            }
         }
     }
 
+    // A-Wing Up (no changes here, shown for context)
     for (const floor in escalatorSteps.up) {
         const steps = escalatorSteps.up[floor];
         const startMesh = escalatorStarts.up[floor];
@@ -798,8 +814,8 @@ export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalator
             dirUp.normalize();
 
             steps.forEach(step => {
-                if (step.material === materials.escalatorEmbarkMaterial) {
-                    step.position.addScaledVector(dirUp, escSpeed * deltaTime); // A-Wing Up
+                if (step.material === materials. escalatorEmbarkMaterial) {
+                    step.position.addScaledVector(dirUp, escSpeed * deltaTime);
                     if (step.position.distanceTo(startMesh.position) >= totalDistanceUp) {
                         step.position.copy(startMesh.position);
                     }
@@ -811,23 +827,32 @@ export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalator
     // Wing B:///////////////////////
     for (const floor in escalatorStepsB.down) {
         const steps = escalatorStepsB.down[floor];
-        const startMesh = escalatorStartsB.down[floor];
-        const endMesh = escalatorEndsB.down[floor];
+        const startMesh = escalatorStartsB.down[floor]; // This is the top platform for B-Down
+        const endMesh = escalatorEndsB.down[floor];     // This is the bottom platform for B-Down
         if (startMesh && endMesh && steps) {
-            const dirDown = new THREE.Vector3().subVectors(startMesh.position, endMesh.position);
+            // Original incorrect direction:
+            // const dirDown = new THREE.Vector3().subVectors(startMesh.position, endMesh.position);
+            
+            // Corrected direction: endMesh.position - startMesh.position
+            // This vector points from the start (top) towards the end (bottom)
+            const dirDown = new THREE.Vector3().subVectors(endMesh.position, startMesh.position); 
             const totalDistanceDown = dirDown.length();
             dirDown.normalize();
+
             steps.forEach(step => {
                 if (step.material === materials.escalatorEmbarkMaterialB) {
-                    step.position.addScaledVector(dirDown, settings.escalatorSpeed * deltaTime);
+                    step.position.addScaledVector(dirDown, settings.escalatorSpeed * deltaTime); // Move steps along the corrected dirDown
+                    
+                    // Reset condition: if the step has moved from startMesh the entire length of the escalator
                     if (step.position.distanceTo(startMesh.position) >= totalDistanceDown) {
-                        step.position.copy(startMesh.position);
+                        step.position.copy(startMesh.position); // Reset step to the startMesh position (top)
                     }
                 }
             });
         }
     }
 
+    // B-Wing Up (no changes here, shown for context)
     for (const floor in escalatorStepsB.up) {
         const steps = escalatorStepsB.up[floor];
         const startMesh = escalatorStartsB.up[floor];
@@ -838,7 +863,7 @@ export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalator
             dirUp.normalize();
 
             steps.forEach(step => {
-                if (step.material === materials.escalatorEmbarkMaterialB) { // Check B-wing material (dark orange)
+                if (step.material === materials.escalatorEmbarkMaterialB) { 
                     step.position.addScaledVector(dirUp, settings.escalatorSpeed * deltaTime);
                     if (step.position.distanceTo(startMesh.position) >= totalDistanceUp) {
                         step.position.copy(startMesh.position);
