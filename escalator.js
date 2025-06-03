@@ -653,14 +653,13 @@ export function calculateEscalatorBoost(
     escalatorSteps, escalatorStarts, escalatorEnds,
     escalatorStepsB, escalatorStartsB, escalatorEndsB,
     settings, deltaTime, playerHeight,
-    playerIntentHorizontalDisplacement, // THREE.Vector3: Player's desired XZ displacement for this frame
-    isAttemptingJump // boolean: True if player pressed jump and was on ground
+    playerIntentHorizontalDisplacement,
+    isAttemptingJump
 ) {
     // Defensive: ensure playerIntentHorizontalDisplacement is a THREE.Vector3
     if (!playerIntentHorizontalDisplacement || typeof playerIntentHorizontalDisplacement.lengthSq !== 'function') {
         playerIntentHorizontalDisplacement = new THREE.Vector3(0, 0, 0);
     }
-
     const rayOrigin = cameraObject.position.clone();
     const rayDirection = new THREE.Vector3(0, -1, 0);
     const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 2);
@@ -673,7 +672,7 @@ export function calculateEscalatorBoost(
     Object.values(escalatorStepsB.down).forEach(s => { if (s) { if (s instanceof THREE.InstancedMesh) allSteps.push(s); else allSteps = allSteps.concat(s); } });
 
     const intersections = raycaster.intersectObjects(allSteps, false);
-    let shouldInitiateJump = false;
+    let resultShouldInitiateJump = false; // Initialize: will be set true if any jump condition met
 
     if (intersections.length > 0) {
         const hitStep = intersections[0].object;
@@ -721,14 +720,18 @@ export function calculateEscalatorBoost(
             }
 
             if (startMesh && endMesh) {
-                const dir = new THREE.Vector3().subVectors(endMesh.position, startMesh.position).normalize();
-                const escalatorBaseMoveComponent = dir.clone().multiplyScalar(settings.escalatorSpeed * deltaTime);
+                const escalatorDirectionVec = new THREE.Vector3().subVectors(endMesh.position, startMesh.position).normalize();
+                const escalatorBaseMoveComponent = escalatorDirectionVec.clone().multiplyScalar(settings.escalatorSpeed * deltaTime);
+                let onEscalatorThisFrame = true;
+                let disembarkedThisFrame = false;
+                // resultShouldInitiateJump is false by default, will be set by jump logic below
 
+                // --- 1. Check for disembarking 'down' (returns early) ---
                 if (foundType === 'down') {
-                    const vecPlayerToCenterOfEndMesh = new THREE.Vector3().subVectors(endMesh.position, cameraObject.position);
+                    const vecPlayerToCenterOfEndMesh = new THREE.Vector3().subVectors(endMesh.position, cameraObject.position); // Player to end
                     const escalatorDirection = new THREE.Vector3().subVectors(endMesh.position, startMesh.position).normalize();
                     const distanceToEndAlongEscalator = vecPlayerToCenterOfEndMesh.dot(escalatorDirection);
-                    const moveDistanceThisFrameForCheck = settings.escalatorSpeed * deltaTime;
+                    const moveDistanceThisFrameForCheck = escalatorBaseMoveComponent.length(); // Use actual move length
 
                     if (distanceToEndAlongEscalator <= moveDistanceThisFrameForCheck * 0.9 && distanceToEndAlongEscalator >= -1.0) {
                         const endMeshTopSurfaceY = endMesh.position.y + (endMesh.geometry.parameters.height / 2);
@@ -736,51 +739,76 @@ export function calculateEscalatorBoost(
                         cameraObject.position.z = endMesh.position.z; // Align with center of landing platform Z
                         cameraObject.position.y = endMeshTopSurfaceY + playerHeight; // Player feet on platform, camera at eye level
                         cameraObject.position.y += 0.21;
-                        return { 
-                            disembarkedDown: true, 
-                            onEscalator: false,
-                            shouldInitiateJump: true, // To trigger small pop in main loop
-                            disembarkPop: true, // Specific flag for disembark pop
-                            wing: null, type: null, floor: null 
+                        disembarkedThisFrame = true;
+                        onEscalatorThisFrame = false; 
+                        resultShouldInitiateJump = true; // Trigger small pop for disembarking
+                        return {
+                            onEscalator: onEscalatorThisFrame,
+                            shouldInitiateJump: resultShouldInitiateJump,
+                            disembarkedDown: disembarkedThisFrame,
+                            wing: null, type: null, floor: null
                         };
                     }
                 }
 
-                // Check for special jump condition: on 'down' escalator, moving against it, and pressing jump
-                if (foundType === 'down' && playerIntentHorizontalDisplacement.lengthSq() > 0.01 && isAttemptingJump) {
-                    const escalatorDirXZ = new THREE.Vector3(dir.x, 0, dir.z).normalize();
-                    const playerIntentDirXZNormalized = new THREE.Vector3(playerIntentHorizontalDisplacement.x, 0, playerIntentHorizontalDisplacement.z).normalize();
-                    if (playerIntentDirXZNormalized.lengthSq() > 0 && escalatorDirXZ.dot(playerIntentDirXZNormalized) < -0.7) { // Moving strongly opposite
-                        // Apply player's XZ movement. Escalator's Y is ignored. Jump initiated by main loop.
+                // --- 2. Determine if a jump should be initiated this frame ---
+                let wantsToJumpBasedOnInput = isAttemptingJump; // Jump from spacebar press
+                let isUphillDirectionalAction = false;
+
+                if (!wantsToJumpBasedOnInput) { // If not already jumping via spacebar, check for directional "uphill" press
+                    const escalatorDirXZ = new THREE.Vector3(escalatorDirectionVec.x, 0, escalatorDirectionVec.z).normalize();
+                    const playerIntentDirXZNormalized = playerIntentHorizontalDisplacement.clone().setY(0).normalize();
+
+                    if (playerIntentDirXZNormalized.lengthSq() > 0.01) { // Player is pressing an arrow key
+                        if (foundType === 'down' && escalatorDirXZ.dot(playerIntentDirXZNormalized) < -0.5) { // Moving against 'down' (uphill)
+                            wantsToJumpBasedOnInput = true; 
+                            isUphillDirectionalAction = true;
+                        } else if (foundType === 'up' && escalatorDirXZ.dot(playerIntentDirXZNormalized) > 0.5) { // Moving with 'up' (uphill)
+                            wantsToJumpBasedOnInput = true; 
+                            isUphillDirectionalAction = true;
+                        }
+                    }
+                }
+                
+                if (wantsToJumpBasedOnInput) {
+                    resultShouldInitiateJump = true;
+                }
+
+                // --- 3. Apply Movement ---
+                if (resultShouldInitiateJump) { 
+                    // Player's XZ intent is applied. Escalator's Y component is NOT applied because a jump is being initiated.
+                    if (isUphillDirectionalAction) { // Directional jump (uphill arrow key press)
                         cameraObject.position.x += playerIntentHorizontalDisplacement.x;
                         cameraObject.position.z += playerIntentHorizontalDisplacement.z;
-                        shouldInitiateJump = true;
-                        return { 
-                            onEscalator: true, // Still on it for this frame to allow jump from "ground"
-                            shouldInitiateJump: true,
-                            disembarkedDown: false,
-                            wing: wing, type: foundType, floor: foundFloor
-                        };
+                    } else { // Standard spacebar jump (isAttemptingJump was true from the start)
+                        const escalatorDirXZ = new THREE.Vector3(escalatorDirectionVec.x, 0, escalatorDirectionVec.z).normalize();
+                        const playerIntentDirXZNormalized = playerIntentHorizontalDisplacement.clone().setY(0).normalize();
+
+                        if (foundType === 'down' && playerIntentDirXZNormalized.lengthSq() > 0 && escalatorDirXZ.dot(playerIntentDirXZNormalized) < -0.5) {
+                            // Jumping and moving strongly against a downward escalator: prioritize player's XZ.
+                            cameraObject.position.x += playerIntentHorizontalDisplacement.x;
+                            cameraObject.position.z += playerIntentHorizontalDisplacement.z;
+                        } else {
+                            // Jumping with/sideways on 'down' escalator, or any jump on 'up' escalator: combine XZ.
+                            cameraObject.position.x += escalatorBaseMoveComponent.x + playerIntentHorizontalDisplacement.x;
+                            cameraObject.position.z += escalatorBaseMoveComponent.z + playerIntentHorizontalDisplacement.z;
+                            // If it's an 'up' escalator and a spacebar jump, still add some base momentum if desired
+                            if (foundType === 'up') {
+                                cameraObject.position.x += escalatorBaseMoveComponent.x * 0.3; // Reduced momentum factor
+                                cameraObject.position.z += escalatorBaseMoveComponent.z * 0.3;
+                            }
+                        }
                     }
+                    // The main loop will handle playerVelocity.y for the jump.
+                } else { // Not jumping: normal escalator movement + player XZ input
+                    cameraObject.position.x += escalatorBaseMoveComponent.x + playerIntentHorizontalDisplacement.x;
+                    cameraObject.position.y += escalatorBaseMoveComponent.y;
+                    cameraObject.position.z += escalatorBaseMoveComponent.z + playerIntentHorizontalDisplacement.z;
                 }
-
-                // Normal movement on escalator (or normal jump)
-                let combinedMove = new THREE.Vector3();
-                combinedMove.x = escalatorBaseMoveComponent.x + playerIntentHorizontalDisplacement.x;
-                combinedMove.z = escalatorBaseMoveComponent.z + playerIntentHorizontalDisplacement.z;
-
-                if (isAttemptingJump) {
-                    shouldInitiateJump = true;
-                    combinedMove.y = 0; // Player's jump Y will take over, don't apply escalator's Y.
-                } else {
-                    combinedMove.y = escalatorBaseMoveComponent.y; // Apply escalator's Y.
-                }
-                cameraObject.position.add(combinedMove);
-
                 return { 
-                    shouldInitiateJump: shouldInitiateJump,
-                    onEscalator: true,
-                    disembarkedDown: false,
+                    onEscalator: onEscalatorThisFrame,
+                    shouldInitiateJump: resultShouldInitiateJump,
+                    disembarkedDown: disembarkedThisFrame,
                     wing: wing,
                     type: foundType,
                     floor: parseInt(foundFloor)
@@ -790,13 +818,12 @@ export function calculateEscalatorBoost(
     }
     // Player is not on any escalator step
     return { 
-        shouldInitiateJump: false,
         onEscalator: false,
+        shouldInitiateJump: resultShouldInitiateJump, // Could be false if jump attempted off-escalator
         disembarkedDown: false,
         wing: null, type: null, floor: null
     };
 }
-
 export function animateActiveEscalatorSteps(deltaTime, escalatorSteps, escalatorStepsB, escalatorStarts, escalatorStartsB, escalatorEnds, escalatorEndsB, settings, materials) {
     const escSpeed = settings.escalatorSpeed;
 
