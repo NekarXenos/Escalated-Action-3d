@@ -35,6 +35,9 @@ const SETTINGS = {
 
 // --- Core Variables ---
 let scene, camera, renderer, controls;
+
+// --- Global Arrays ---
+const fallenLampshades = [];
 let playerBox; // Added: Global player's collision box
 let clock;
 let playerVelocity = new THREE.Vector3();
@@ -397,7 +400,7 @@ const ENEMY_SETTINGS = {
 const projectiles = []; // Array to store active projectiles
 const enemyGeometry = new THREE.BoxGeometry(ENEMY_SETTINGS.width, ENEMY_SETTINGS.height, ENEMY_SETTINGS.depth);
 const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red for enemies
-const projectileGeometry = new THREE.SphereGeometry(ENEMY_SETTINGS.projectileSize, 8, 8);
+const projectileGeometry = new THREE.SphereGeometry(ENEMY_SETTINGS.projectileSize, 6, 6);
 const projectileMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, emissiveIntensity: 1 });
 
 
@@ -608,7 +611,7 @@ function generateWorld() {
     const basementWallMaterial = new THREE.MeshStandardMaterial({ color: 0x656565, roughness: 0.8 });
     const EscalatorEmbarkMaterial = new THREE.MeshStandardMaterial({ color: 0x332222,  metalness: 0.8, roughness: 0.5, emissive: 0x110000, emissiveIntensity: 0.1 }); // Added emissive property
     const garageDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x909090, metalness: 0.6, roughness: 0.5 });
-    const EscalatorEmbarkMaterialB = new THREE.MeshStandardMaterial({ color: 0x332211,  metalness: 0.8, roughness: 0.5, emissive: 0x080400, emissiveIntensity: 0.1 }); // Dark Orange for B-Wing
+    const EscalatorEmbarkMaterialB = new THREE.MeshStandardMaterial({ color: 0x332211,  metalness: 0.8, roughness: 0.5, emissive: 0x050200, emissiveIntensity: 0.1 }); // Dark Orange for B-Wing
 
     // Store references globally for use in updatePlayer
     window.EscalatorMaterial = EscalatorMaterial;
@@ -4329,80 +4332,104 @@ function updatePlayer(deltaTime) {
     const speed = (isSprinting ? SETTINGS.playerSpeed * SETTINGS.sprintMultiplier : SETTINGS.playerSpeed) * deltaTime;
     const cameraObject = controls.getObject(); // This is the holder for the camera
 
-    // Player movement on escalator steps is now handled by calculateEscalatorBoost
-    const escalatorResult = calculateEscalatorBoost( // This function directly moves the player on steps
-        cameraObject, 
-        escalatorSteps, escalatorStarts, escalatorEnds, 
-        escalatorStepsB, escalatorStartsB, escalatorEndsB, 
-        SETTINGS, deltaTime, playerHeight
-    );
-
-    // Apply gravity
-    // Allow escalator vertical movement to override gravity if player is on an active step
-    if (!playerOnGround && !(escalatorResult && escalatorResult.onEscalator)) {
-        playerVelocity.y += SETTINGS.gravity * deltaTime;
-    }
-
-    // Calculate movement direction based on camera orientation
-    const moveDirection = new THREE.Vector3(); // Player's input movement
+    // Determine player's XZ input for this frame
+    const moveDirection = new THREE.Vector3();
     if (moveForward) moveDirection.z = -1;
     if (moveBackward) moveDirection.z = 1;
     if (moveLeft) moveDirection.x = -1;
     if (moveRight) moveDirection.x = 1;
+    moveDirection.normalize();
+    moveDirection.applyEuler(cameraObject.rotation);
+    const playerIntentHorizontalDisplacement = new THREE.Vector3(moveDirection.x * speed, 0, moveDirection.z * speed);
 
-    moveDirection.normalize(); // Ensure consistent speed diagonally
-    moveDirection.applyEuler(cameraObject.rotation); // Apply camera rotation (Y-axis mainly for FPS)
+    // Check if player is attempting to jump this frame
+    // This flag should ideally be set by onKeyDown and cleared by onKeyUp or after use.
+    // For simplicity here, we'll assume a mechanism exists to know if jump was just pressed.
+    // Let's use a temporary check based on current playerOnGround and if velocity is near zero.
+    // A more robust solution would use a flag set directly by the 'Space' key press in onKeyDown.
+    const isPlayerTryingToJumpThisFrame = playerVelocity.y === SETTINGS.jumpVelocity; // This is a simplification
+
+    const escalatorResult = calculateEscalatorBoost(
+        cameraObject, 
+        escalatorSteps, escalatorStarts, escalatorEnds, 
+        escalatorStepsB, escalatorStartsB, escalatorEndsB, 
+        SETTINGS, deltaTime, playerHeight,
+        playerIntentHorizontalDisplacement,
+        isPlayerTryingToJumpThisFrame // True if jump key was pressed and player was on ground
+    );
 
     if (escalatorResult.disembarkedDown) {
         playerVelocity.y = SETTINGS.jumpVelocity * 0.25; // Small upward pop (adjust multiplier as needed, e.g., 0.2 to 0.3)
         playerOnGround = false; // Allow the pop to happen
     }
 
-    // If calculateEscalatorBoost handled movement (returned onEscalator: true),
-    // player input movement (deltaX, deltaZ) is for off-escalator or additive movement.
-    // Since calculateEscalatorBoost directly modifies cameraObject.position,
-    // we only apply player input movement if not actively on an escalator step.
-    let totalDeltaX = 0;
-    let totalDeltaZ = 0;
+    // Apply gravity
+    if (!playerOnGround) {
+        // If player is jumping (initiated by escalatorResult or normal jump) OR is completely off escalator steps
+        if (escalatorResult.shouldInitiateJump || !escalatorResult.onEscalator) {
+            playerVelocity.y += SETTINGS.gravity * deltaTime;
+        }
+        // If player is on escalator but not jumping, Y movement was handled by calculateEscalatorBoost
+    }
+
+    // Handle jump initiation
+    // `isPlayerTryingToJumpThisFrame` should be true if space was pressed AND playerOnGround was true at start of frame
+    let actualJumpAttemptedThisFrame = false; // We'll use the global playerOnGround for this
+    if (playerVelocity.y === SETTINGS.jumpVelocity && playerOnGround) { // A bit of a hack to detect jump intent
+        actualJumpAttemptedThisFrame = true;
+    }
+
+    if (escalatorResult.shouldInitiateJump || (actualJumpAttemptedThisFrame && !escalatorResult.onEscalator)) {
+        if (playerOnGround || escalatorResult.onEscalator) { // Allow jump if on ground or on escalator step
+            playerVelocity.y = SETTINGS.jumpVelocity;
+            playerOnGround = false;
+        }
+    }
+
+    // Apply player's own XZ movement ONLY IF NOT on an escalator step
+    // (because calculateEscalatorBoost now incorporates player XZ intent when on escalator)
     if (!escalatorResult.onEscalator) {
-        totalDeltaX = moveDirection.x * speed;
-        totalDeltaZ = moveDirection.z * speed;
-    }
-
-    // --- Basic Collision Detection (Simple - Check X and Z separately) ---
-    // Store original position
-    const originalPosition = cameraObject.position.clone();
-    // Move X
-    cameraObject.position.x += totalDeltaX;
-    if (checkCollision()) {
-        cameraObject.position.x = originalPosition.x; // Revert X if collision
-    }
-
-    // Move Z
-    cameraObject.position.z += totalDeltaZ;
-    if (checkCollision()) {
-        cameraObject.position.z = originalPosition.z; // Revert Z if collision
+        const originalPositionXZ = cameraObject.position.clone();
+        cameraObject.position.x += playerIntentHorizontalDisplacement.x;
+        if (checkCollision()) {
+            cameraObject.position.x = originalPositionXZ.x;
+        }
+        cameraObject.position.z += playerIntentHorizontalDisplacement.z;
+        if (checkCollision()) {
+            cameraObject.position.z = originalPositionXZ.z;
+        }
     }
 
     // --- Vertical Movement & Ground Check ---
+    const originalPositionY = cameraObject.position.y; // Define originalPositionY before Y movement
     cameraObject.position.y += playerVelocity.y * deltaTime;
 
     // Check if player landed on something
-    playerOnGround = false;
+    const previousPlayerOnGround = playerOnGround; // Store state before collision check
+    playerOnGround = false; // Assume not on ground until collision check proves otherwise
+
     if (checkCollision()) {
         // If colliding while moving down, we landed
         if (playerVelocity.y <= 0) {
             playerOnGround = true;
             playerVelocity.y = 0;
-            // Adjust position slightly above the collision point to prevent sinking
-             // More robust collision would provide the exact collision point
-             // For now, revert Y position - this is very basic!
-             cameraObject.position.y = originalPosition.y; // Revert Y movement on vertical collision
-             // A better approach involves raycasting downwards to find the exact ground position
+            cameraObject.position.y = originalPositionY; // Revert Y to before this frame's Y velocity
+
+            // "Stuck on escalator jump" logic:
+            // If player attempted a jump on escalator (shouldInitiateJump was true from escalatorResult)
+            // and they immediately landed (playerOnGround is true, velocity.y is 0)
+            if (escalatorResult.shouldInitiateJump && escalatorResult.onEscalator && !previousPlayerOnGround) {
+                 // And they were considered on the escalator when the jump was initiated
+                console.log("Player jump on escalator potentially stuck, nudging.");
+                cameraObject.position.y += 0.15; // Small lift
+                playerVelocity.y = 1.0;      // Tiny residual upward velocity
+                playerOnGround = false;      // Allow the nudge to take effect
+            }
+
         } else {
              // Collided while moving up (hit ceiling)
              playerVelocity.y = 0;
-             cameraObject.position.y = originalPosition.y; // Revert Y movement
+             cameraObject.position.y = originalPositionY;
         }
     }
 
@@ -4486,6 +4513,70 @@ function updatePlayer(deltaTime) {
         playerOnEscalator.wing = wingThisFrame;
     }
     
+    // --- Corridor Escalator Animation Override Logic ---
+    const playerIsInCorridorX = (playerPos.x >= 0 && playerPos.x <= SETTINGS.corridorWidth);
+
+    if (playerIsInCorridorX) {
+        const allEscalatorSystems = [
+            { name: "A-Up",   wing: 'A', type: 'up',   starts: escalatorStarts.up,   steps: escalatorSteps.up,   embarkMat: window.EscalatorEmbarkMaterial },
+            { name: "A-Down", wing: 'A', type: 'down', starts: escalatorStarts.down, steps: escalatorSteps.down, embarkMat: window.EscalatorEmbarkMaterial },
+            { name: "B-Up",   wing: 'B', type: 'up',   starts: escalatorStartsB.up,  steps: escalatorStepsB.up,  embarkMat: window.EscalatorEmbarkMaterialB },
+            { name: "B-Down", wing: 'B', type: 'down', starts: escalatorStartsB.down,steps: escalatorStepsB.down,embarkMat: window.EscalatorEmbarkMaterialB }
+        ];
+
+        allEscalatorSystems.forEach(escSystem => {
+            for (const floorKey in escSystem.steps) {
+                const floor = parseInt(floorKey);
+                const stepsOrInstancedMesh = escSystem.steps[floor];
+                const startPlatform = escSystem.starts[floor];
+
+                if (!stepsOrInstancedMesh) continue;
+
+                let isMaterialSetToAnimate = false;
+                if (stepsOrInstancedMesh instanceof THREE.InstancedMesh) {
+                    isMaterialSetToAnimate = (stepsOrInstancedMesh.material === escSystem.embarkMat);
+                } else if (Array.isArray(stepsOrInstancedMesh) && stepsOrInstancedMesh.length > 0) {
+                    isMaterialSetToAnimate = (stepsOrInstancedMesh[0].material === escSystem.embarkMat);
+                }
+
+                if (isMaterialSetToAnimate) {
+                    let playerIsActivelyUsingThisEscalator = false;
+
+                    if (startPlatform && isPlayerOnMesh(playerPos, startPlatform)) {
+                        playerIsActivelyUsingThisEscalator = true;
+                    }
+
+                    if (!playerIsActivelyUsingThisEscalator && escalatorResult.onEscalator &&
+                        escalatorResult.wing === escSystem.wing &&
+                        escalatorResult.type === escSystem.type &&
+                        escalatorResult.floor === floor) {
+                        playerIsActivelyUsingThisEscalator = true;
+                    }
+                    
+                    if (!playerIsActivelyUsingThisEscalator) {
+                        if (stepsOrInstancedMesh instanceof THREE.InstancedMesh) {
+                            if (stepsOrInstancedMesh.material !== window.EscalatorMaterial) {
+                                stepsOrInstancedMesh.material = window.EscalatorMaterial;
+                                stepsOrInstancedMesh.material.needsUpdate = true;
+                            }
+                        } else if (Array.isArray(stepsOrInstancedMesh)) {
+                            stepsOrInstancedMesh.forEach(step => {
+                                if (step.material !== window.EscalatorMaterial) {
+                                    step.material = window.EscalatorMaterial;
+                                }
+                            });
+                        }
+
+                        if (playerOnEscalator.wing === escSystem.wing &&
+                            playerOnEscalator.type === escSystem.type &&
+                            playerOnEscalator.floor === floor) {
+                            playerOnEscalator = { type: null, floor: null, wing: null };
+                        }
+                    }
+                }
+            }
+        });
+    }
 }
 
 // Helper function to check if player is on a mesh (AABB check)
@@ -4548,6 +4639,10 @@ function updateUI() {
             floorText = `Floor: B${Math.abs(currentFloor)}`;
         }
         document.getElementById('floorLevel').innerText = floorText;
+    }
+    const lampshadeCountElement = document.getElementById('lampshadeCount');
+    if (lampshadeCountElement) {
+        lampshadeCountElement.innerText = `Lampshades: ${playerInventory.lampshades.length}`;
     }
 }
 
@@ -5209,3 +5304,36 @@ init();
 //enemy.position.set(x, y, z); // Set the enemy's position
 //scene.add(enemy);
 //enemies.push(enemy); // Add the enemy to the array
+
+// // Inside your main game loop (e.g., in mainTMPd.js)
+// let playerOnEscVisualState = { type: null, floor: null, wing: null }; // Persistent state for visuals
+
+// // After calling calculateEscalatorBoost:
+// const escalatorActualStatus = calculateEscalatorBoost(...);
+
+// if (!escalatorActualStatus.onEscalator && playerOnEscVisualState.type !== null) {
+//     // Player is confirmed to be off all escalator steps by calculateEscalatorBoost,
+//     // but visuals might still be active for playerOnEscVisualState.
+//     const oldEscGroup = allEscalatorStarts.find( /* logic to find based on playerOnEscVisualState */ );
+//     if (oldEscGroup && oldEscGroup.steps[playerOnEscVisualState.floor]) {
+//         oldEscGroup.steps[playerOnEscVisualState.floor].forEach(step => {
+//             step.material = materials.escalatorMaterial;
+//         });
+//     }
+//     playerOnEscVisualState.type = null;
+//     playerOnEscVisualState.floor = null;
+//     playerOnEscVisualState.wing = null;
+// }
+
+// // Then call updateEscalatorStepVisuals, potentially updating playerOnEscVisualState
+// // if the player steps on a new start platform.
+// updateEscalatorStepVisuals(playerWorldPos, playerHeight, playerOnEscVisualState, ...);
+
+// // And ensure playerOnEscVisualState is also updated if player gets on steps not via start platform
+// if (escalatorActualStatus.onEscalator && playerOnEscVisualState.type === null) {
+//    // Player got on steps directly, update visual state to match actual
+//    playerOnEscVisualState.type = escalatorActualStatus.type;
+//    playerOnEscVisualState.floor = escalatorActualStatus.floor;
+//    playerOnEscVisualState.wing = escalatorActualStatus.wing;
+//    // Optionally, trigger material change here too if not covered by updateEscalatorStepVisuals
+// }
