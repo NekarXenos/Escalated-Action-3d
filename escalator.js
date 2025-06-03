@@ -15,6 +15,16 @@ function isPlayerOnMesh(playerPos, playerHeight, mesh) {
     return meshBox.intersectsBox(playerBox);
 }
 
+// --- Escalator Mirroring Helper ---
+function mirrorPositionAroundPivot(pos, pivotX, pivotZ) {
+    // 180 degree rotation around Y axis at (pivotX, *, pivotZ)
+    return new THREE.Vector3(
+        2 * pivotX - pos.x,
+        pos.y,
+        2 * pivotZ - pos.z
+    );
+}
+
 export function createEscalatorsForFloor(config) {
     const {
         floorIndex,
@@ -554,103 +564,116 @@ export function createEscalatorsForFloor(config) {
 }
 
 // The escalator-related functions are now separated into this module for reusability.
+// In escalatorTMPd.js
 
-export function updateEscalatorStepVisuals(playerWorldPos, playerHeight, playerOnEscalatorState, escalatorSteps, escalatorStarts, escalatorStepsB, escalatorStartsB, materials) {
-    let escalatorFound = false;
-    let escalatorType = null;
-    let escalatorFloor = null;
-    let escalatorWing = null;
+export function updateEscalatorStepVisuals(
+    playerWorldPos,
+    playerHeight,
+    playerOnEscalatorState, // This object tracks the visually active escalator state
+    escalatorSteps,
+    escalatorStarts,
+    escalatorStepsB,
+    escalatorStartsB,
+    materials
+) {
+    let currentScanType = null;
+    let currentScanFloor = null;
+    let currentScanWing = null;
+    let currentScanFound = false;
 
-    // Check A-Wing
-    for (const [floor, mesh] of Object.entries(escalatorStarts.up)) {
-        if (isPlayerOnMesh(playerWorldPos, playerHeight, mesh)) {
-            escalatorFound = true;
-            escalatorType = 'up';
-            escalatorFloor = parseInt(floor);
-            escalatorWing = 'A';
-            break;
-        }
-    }
-    if (!escalatorFound) {
-        for (const [floor, mesh] of Object.entries(escalatorStarts.down)) {
+    // Consolidate start platform checks to find if player is on any start platform
+    const allEscalatorStarts = [
+        { type: 'up', wing: 'A', starts: escalatorStarts.up, steps: escalatorSteps.up, material: materials.escalatorEmbarkMaterial },
+        { type: 'down', wing: 'A', starts: escalatorStarts.down, steps: escalatorSteps.down, material: materials.escalatorEmbarkMaterial },
+        { type: 'up', wing: 'B', starts: escalatorStartsB.up, steps: escalatorStepsB.up, material: materials.escalatorEmbarkMaterialB },
+        { type: 'down', wing: 'B', starts: escalatorStartsB.down, steps: escalatorStepsB.down, material: materials.escalatorEmbarkMaterialB }
+    ];
+
+    for (const escGroup of allEscalatorStarts) {
+        if (currentScanFound) break; // Found one, no need to check others
+        for (const [floor, mesh] of Object.entries(escGroup.starts)) {
             if (isPlayerOnMesh(playerWorldPos, playerHeight, mesh)) {
-                escalatorFound = true;
-                escalatorType = 'down';
-                escalatorFloor = parseInt(floor);
-                escalatorWing = 'A';
-                break;
-            }
-        }
-    }
-    // Check B-Wing
-    if (!escalatorFound) {
-        for (const [floor, mesh] of Object.entries(escalatorStartsB.up)) {
-            if (isPlayerOnMesh(playerWorldPos, playerHeight, mesh)) {
-                escalatorFound = true;
-                escalatorType = 'up';
-                escalatorFloor = parseInt(floor);
-                escalatorWing = 'B';
-                break;
-            }
-        }
-    }
-    if (!escalatorFound) {
-        for (const [floor, mesh] of Object.entries(escalatorStartsB.down)) {
-            if (isPlayerOnMesh(playerWorldPos, playerHeight, mesh)) {
-                escalatorFound = true;
-                escalatorType = 'down';
-                escalatorFloor = parseInt(floor);
-                escalatorWing = 'B';
+                currentScanType = escGroup.type;
+                currentScanFloor = parseInt(floor);
+                currentScanWing = escGroup.wing;
+                currentScanFound = true;
                 break;
             }
         }
     }
 
-    // Only update if state changed
-    if (
-        playerOnEscalatorState.type !== escalatorType ||
-        playerOnEscalatorState.floor !== escalatorFloor ||
-        playerOnEscalatorState.wing !== escalatorWing
-    ) {
-        // Reset all step materials
-        for (const steps of Object.values(escalatorSteps.up))   { steps.forEach(step => { step.material = materials.escalatorMaterial; }); }
-        for (const steps of Object.values(escalatorSteps.down)) { steps.forEach(step => { step.material = materials.escalatorMaterial; }); }
-        for (const steps of Object.values(escalatorStepsB.up))  { steps.forEach(step => { step.material = materials.escalatorMaterial; }); }
-        for (const steps of Object.values(escalatorStepsB.down)){ steps.forEach(step => { step.material = materials.escalatorMaterial; }); }
+    // Check if the detected escalator start platform is different from the currently visually active one
+    if (playerOnEscalatorState.type !== currentScanType ||
+        playerOnEscalatorState.floor !== currentScanFloor ||
+        playerOnEscalatorState.wing !== currentScanWing) {
 
-        // Set the correct material for the escalator the player is on
-        if (escalatorFound && escalatorType && escalatorFloor !== null && escalatorWing) {
-            if (escalatorWing === 'A' && escalatorSteps[escalatorType] && escalatorSteps[escalatorType][escalatorFloor]) {
-                escalatorSteps[escalatorType][escalatorFloor].forEach(step => {
-                    step.material = materials.escalatorEmbarkMaterial;
-                });
-            } else if (escalatorWing === 'B' && escalatorStepsB[escalatorType] && escalatorStepsB[escalatorType][escalatorFloor]) {
-                escalatorStepsB[escalatorType][escalatorFloor].forEach(step => {
-                    step.material = materials.escalatorEmbarkMaterialB;
+        // If player has stepped onto a new/different start platform
+        if (currentScanFound) {
+            // 1. Deactivate visuals for the PREVIOUSLY active escalator (if any)
+            if (playerOnEscalatorState.type !== null) {
+                const oldEscGroup = allEscalatorStarts.find(
+                    eg => eg.type === playerOnEscalatorState.type && eg.wing === playerOnEscalatorState.wing
+                );
+                if (oldEscGroup && oldEscGroup.steps[playerOnEscalatorState.floor]) {
+                    oldEscGroup.steps[playerOnEscalatorState.floor].forEach(step => {
+                        step.material = materials.escalatorMaterial; // Reset to default material
+                    });
+                }
+            }
+
+            // 2. Activate visuals for the NEWLY detected escalator
+            const newEscGroup = allEscalatorStarts.find(
+                eg => eg.type === currentScanType && eg.wing === currentScanWing
+            );
+            if (newEscGroup && newEscGroup.steps[currentScanFloor]) {
+                newEscGroup.steps[currentScanFloor].forEach(step => {
+                    step.material = newEscGroup.material; // Set to embark material
                 });
             }
+
+            // 3. Update the visual state
+            playerOnEscalatorState.type = currentScanType;
+            playerOnEscalatorState.floor = currentScanFloor;
+            playerOnEscalatorState.wing = currentScanWing;
+
+        } else {
+            // Player is NOT on any start platform, but the state changed (meaning they were on one).
+            // This implies they stepped OFF a start platform.
+            // Crucially, DO NOTHING to change playerOnEscalatorState or materials here.
+            // The assumption is they might be on the moving steps.
+            // The main game loop should handle resetting playerOnEscalatorState and the
+            // corresponding escalator's step materials when calculateEscalatorBoost confirms
+            // the player is completely off that escalator.
         }
-        playerOnEscalatorState.type = escalatorType;
-        playerOnEscalatorState.floor = escalatorFloor;
-        playerOnEscalatorState.wing = escalatorWing;
     }
 }
 
-export function calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorStarts, escalatorEnds, escalatorStepsB, escalatorStartsB, escalatorEndsB, settings, deltaTime, playerHeight) {
-    let escalatorBoost = new THREE.Vector3(0, 0, 0);
+export function calculateEscalatorBoost(
+    cameraObject,
+    escalatorSteps, escalatorStarts, escalatorEnds,
+    escalatorStepsB, escalatorStartsB, escalatorEndsB,
+    settings, deltaTime, playerHeight,
+    playerIntentHorizontalDisplacement, // THREE.Vector3: Player's desired XZ displacement for this frame
+    isAttemptingJump // boolean: True if player pressed jump and was on ground
+) {
+    // Defensive: ensure playerIntentHorizontalDisplacement is a THREE.Vector3
+    if (!playerIntentHorizontalDisplacement || typeof playerIntentHorizontalDisplacement.lengthSq !== 'function') {
+        playerIntentHorizontalDisplacement = new THREE.Vector3(0, 0, 0);
+    }
+
     const rayOrigin = cameraObject.position.clone();
     const rayDirection = new THREE.Vector3(0, -1, 0);
     const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, 2);
 
     let allSteps = [];
     // Consolidate all steps for raycasting
-    for (const key in escalatorSteps.up) { allSteps = allSteps.concat(escalatorSteps.up[key]); }
-    for (const key in escalatorSteps.down) { allSteps = allSteps.concat(escalatorSteps.down[key]); }
-
-    for (const key in escalatorStepsB.up) { allSteps = allSteps.concat(escalatorStepsB.up[key]); }
-    for (const key in escalatorStepsB.down) { allSteps = allSteps.concat(escalatorStepsB.down[key]); }
+    Object.values(escalatorSteps.up).forEach(s => { if (s) { if (s instanceof THREE.InstancedMesh) allSteps.push(s); else allSteps = allSteps.concat(s); } });
+    Object.values(escalatorSteps.down).forEach(s => { if (s) { if (s instanceof THREE.InstancedMesh) allSteps.push(s); else allSteps = allSteps.concat(s); } });
+    Object.values(escalatorStepsB.up).forEach(s => { if (s) { if (s instanceof THREE.InstancedMesh) allSteps.push(s); else allSteps = allSteps.concat(s); } });
+    Object.values(escalatorStepsB.down).forEach(s => { if (s) { if (s instanceof THREE.InstancedMesh) allSteps.push(s); else allSteps = allSteps.concat(s); } });
 
     const intersections = raycaster.intersectObjects(allSteps, false);
+    let shouldInitiateJump = false;
 
     if (intersections.length > 0) {
         const hitStep = intersections[0].object;
@@ -660,30 +683,29 @@ export function calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorS
 
         // Check Wing A steps
         for (const floor in escalatorSteps.up) {
-            if (escalatorSteps.up[floor].includes(hitStep)) {
-                foundType = 'up'; foundFloor = floor; wing = 'A'; break;
+            if (escalatorSteps.up[floor] === hitStep || (Array.isArray(escalatorSteps.up[floor]) && escalatorSteps.up[floor].includes(hitStep))) {
+                foundType = 'up'; foundFloor = parseInt(floor); wing = 'A'; break;
             }
         }
         if (!foundType) {
             for (const floor in escalatorSteps.down) {
-                if (escalatorSteps.down[floor].includes(hitStep)) {
-                    foundType = 'down'; foundFloor = floor; wing = 'A'; break;
+                if (escalatorSteps.down[floor] === hitStep || (Array.isArray(escalatorSteps.down[floor]) && escalatorSteps.down[floor].includes(hitStep))) {
+                    foundType = 'down'; foundFloor = parseInt(floor); wing = 'A'; break;
                 }
             }
         }
-
         // If not found in Wing A, check Wing B steps
         if (!foundType) {
             for (const floor in escalatorStepsB.up) {
-                if (escalatorStepsB.up[floor].includes(hitStep)) {
-                    foundType = 'up'; foundFloor = floor; wing = 'B'; break;
+                if (escalatorStepsB.up[floor] === hitStep || (Array.isArray(escalatorStepsB.up[floor]) && escalatorStepsB.up[floor].includes(hitStep))) {
+                    foundType = 'up'; foundFloor = parseInt(floor); wing = 'B'; break;
                 }
             }
         }
         if (!foundType) {
             for (const floor in escalatorStepsB.down) {
-                if (escalatorStepsB.down[floor].includes(hitStep)) {
-                    foundType = 'down'; foundFloor = floor; wing = 'B'; break;
+                if (escalatorStepsB.down[floor] === hitStep || (Array.isArray(escalatorStepsB.down[floor]) && escalatorStepsB.down[floor].includes(hitStep))) {
+                    foundType = 'down'; foundFloor = parseInt(floor); wing = 'B'; break;
                 }
             }
         }
@@ -700,55 +722,65 @@ export function calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorS
 
             if (startMesh && endMesh) {
                 const dir = new THREE.Vector3().subVectors(endMesh.position, startMesh.position).normalize();
-                const moveDistanceThisFrame = settings.escalatorSpeed * deltaTime;
-                const move = dir.clone().multiplyScalar(moveDistanceThisFrame);
+                const escalatorBaseMoveComponent = dir.clone().multiplyScalar(settings.escalatorSpeed * deltaTime);
 
                 if (foundType === 'down') {
                     const vecPlayerToCenterOfEndMesh = new THREE.Vector3().subVectors(endMesh.position, cameraObject.position);
-                    const distanceToEndAlongEscalator = vecPlayerToCenterOfEndMesh.dot(dir); // dir is already normalized
+                    const escalatorDirection = new THREE.Vector3().subVectors(endMesh.position, startMesh.position).normalize();
+                    const distanceToEndAlongEscalator = vecPlayerToCenterOfEndMesh.dot(escalatorDirection);
+                    const moveDistanceThisFrameForCheck = settings.escalatorSpeed * deltaTime;
 
-                    // Check if player is within one frame's movement of the end platform's center projection
-                    if (distanceToEndAlongEscalator <= moveDistanceThisFrame * 0.9 && distanceToEndAlongEscalator >= 0) {
-                        // Player has reached the bottom landing platform
+                    if (distanceToEndAlongEscalator <= moveDistanceThisFrameForCheck * 0.9 && distanceToEndAlongEscalator >= -1.0) {
                         const endMeshTopSurfaceY = endMesh.position.y + (endMesh.geometry.parameters.height / 2);
-
                         cameraObject.position.x = endMesh.position.x; // Align with center of landing platform X
                         cameraObject.position.z = endMesh.position.z; // Align with center of landing platform Z
                         cameraObject.position.y = endMeshTopSurfaceY + playerHeight; // Player feet on platform, camera at eye level
-
-                        // Apply the 0.21 units upward boost
                         cameraObject.position.y += 0.21;
-
-                        // Signal disembark
                         return { 
                             disembarkedDown: true, 
-                            boost: new THREE.Vector3(0,0,0), 
-                            onEscalator: false, // No longer on escalator steps
+                            onEscalator: false,
+                            shouldInitiateJump: true, // To trigger small pop in main loop
+                            disembarkPop: true, // Specific flag for disembark pop
                             wing: null, type: null, floor: null 
                         };
                     }
                 }
 
-                // Regular movement on escalator steps
-                cameraObject.position.add(move);
-
-                if (foundType === 'down') {
-                    // Ensure player does not sink below the target landing platform while on steps
-                    const endMeshPlatformThickness = endMesh.geometry.parameters.height; // This is typically floorDepth
-                    const endMeshTopSurfaceY = endMesh.position.y + (endMeshPlatformThickness / 2);
-                    const minCameraY = endMeshTopSurfaceY + playerHeight + 0.01; // Player's eye level minimum
-
-                    if (cameraObject.position.y < minCameraY) {
-                        cameraObject.position.y = minCameraY;
-                        // Player's Y is now clamped, X and Z movement from escalator is preserved.
-                        // Jumping is still possible as playerVelocity.y is handled in main loop.
+                // Check for special jump condition: on 'down' escalator, moving against it, and pressing jump
+                if (foundType === 'down' && playerIntentHorizontalDisplacement.lengthSq() > 0.01 && isAttemptingJump) {
+                    const escalatorDirXZ = new THREE.Vector3(dir.x, 0, dir.z).normalize();
+                    const playerIntentDirXZNormalized = new THREE.Vector3(playerIntentHorizontalDisplacement.x, 0, playerIntentHorizontalDisplacement.z).normalize();
+                    if (playerIntentDirXZNormalized.lengthSq() > 0 && escalatorDirXZ.dot(playerIntentDirXZNormalized) < -0.7) { // Moving strongly opposite
+                        // Apply player's XZ movement. Escalator's Y is ignored. Jump initiated by main loop.
+                        cameraObject.position.x += playerIntentHorizontalDisplacement.x;
+                        cameraObject.position.z += playerIntentHorizontalDisplacement.z;
+                        shouldInitiateJump = true;
+                        return { 
+                            onEscalator: true, // Still on it for this frame to allow jump from "ground"
+                            shouldInitiateJump: true,
+                            disembarkedDown: false,
+                            wing: wing, type: foundType, floor: foundFloor
+                        };
                     }
                 }
-                // Player is on an active step
+
+                // Normal movement on escalator (or normal jump)
+                let combinedMove = new THREE.Vector3();
+                combinedMove.x = escalatorBaseMoveComponent.x + playerIntentHorizontalDisplacement.x;
+                combinedMove.z = escalatorBaseMoveComponent.z + playerIntentHorizontalDisplacement.z;
+
+                if (isAttemptingJump) {
+                    shouldInitiateJump = true;
+                    combinedMove.y = 0; // Player's jump Y will take over, don't apply escalator's Y.
+                } else {
+                    combinedMove.y = escalatorBaseMoveComponent.y; // Apply escalator's Y.
+                }
+                cameraObject.position.add(combinedMove);
+
                 return { 
-                    disembarkedDown: false, 
-                    boost: new THREE.Vector3(0,0,0), 
+                    shouldInitiateJump: shouldInitiateJump,
                     onEscalator: true,
+                    disembarkedDown: false,
                     wing: wing,
                     type: foundType,
                     floor: parseInt(foundFloor)
@@ -758,9 +790,9 @@ export function calculateEscalatorBoost(cameraObject, escalatorSteps, escalatorS
     }
     // Player is not on any escalator step
     return { 
-        disembarkedDown: false, 
-        boost: new THREE.Vector3(0,0,0), 
+        shouldInitiateJump: false,
         onEscalator: false,
+        disembarkedDown: false,
         wing: null, type: null, floor: null
     };
 }
