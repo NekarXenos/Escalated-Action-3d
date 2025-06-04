@@ -131,6 +131,13 @@ const WINDOW_HEIGHT_RATIO = 0.6;
 const WINDOW_SILL_RATIO = 0.2; // of wallHeight
 
 
+const playerInventory = {
+    lampshades: 0,
+    // other items can be added here
+};
+
+
+
 // --- Initialization ---
 let frameTimes = [];
 let performanceCheckDone = false;
@@ -253,7 +260,17 @@ function init() {
     generateWorld();
 
     // --- Event Listeners ---
-    document.addEventListener('mousedown', shoot); 
+    document.addEventListener('mousedown', function(event) {
+        // Left mouse button (0): normal shoot
+        // Right mouse button (2): lampshade shoot
+        if (event.button === 0) {
+            shoot();
+        } else if (event.button === 2) {
+            shootLampshade();
+        }
+    });
+    // Prevent context menu on right click
+    window.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
     window.addEventListener('resize', onWindowResize);
@@ -510,6 +527,45 @@ function createProjectile(startPosition, direction, firedByPlayer = false, firer
     worldObjects.push(projectile); // Add to worldObjects for collision detection
 }
 
+// --- Lampshade Projectile Shooter ---
+function shootLampshade() {
+    if (!controls.isLocked) return;
+    if (playerInventory.lampshades <= 0) return;
+
+    // Player shoots a lampshade projectile
+    const projectileStartOffset = 0.5;
+    const projectileDirection = new THREE.Vector3();
+    camera.getWorldDirection(projectileDirection);
+    const projectileStartPosition = new THREE.Vector3();
+    camera.getWorldPosition(projectileStartPosition);
+    projectileStartPosition.addScaledVector(projectileDirection, projectileStartOffset);
+    projectileStartPosition.y -= 0.2;
+
+    createLampshadeProjectile(projectileStartPosition, projectileDirection, true);
+    playerInventory.lampshades--;
+    updateUI();
+}
+
+// --- Create Lampshade Projectile ---
+function createLampshadeProjectile(startPosition, direction, firedByPlayer = false, firer = null) {
+    // Use the same geometry/material as a lampshade
+    const lampshadeProjectile = new THREE.Mesh(lampConeGeo, lampLampshadeMaterial.clone());
+    lampshadeProjectile.scale.set(1.1, 1.1, 1.1); // Slightly larger for fun
+    lampshadeProjectile.position.copy(startPosition);
+    lampshadeProjectile.userData = {
+        type: 'lampshadeProjectile',
+        velocity: direction.clone().multiplyScalar(ENEMY_SETTINGS.projectileSpeed * 0.85), // Slightly slower
+        spawnTime: clock.getElapsedTime(),
+        firedByPlayer: firedByPlayer,
+        firer: firer
+    };
+    lampshadeProjectile.castShadow = true;
+    lampshadeProjectile.receiveShadow = true;
+    scene.add(lampshadeProjectile);
+    projectiles.push(lampshadeProjectile);
+    worldObjects.push(lampshadeProjectile);
+}
+
 // --- Initialization ---
 /* function init() {
     clock = new THREE.Clock(); // Initialize clock here
@@ -611,7 +667,7 @@ function generateWorld() {
     const basementWallMaterial = new THREE.MeshStandardMaterial({ color: 0x656565, roughness: 0.8 });
     const EscalatorEmbarkMaterial = new THREE.MeshStandardMaterial({ color: 0x332222,  metalness: 0.8, roughness: 0.5, emissive: 0x110000, emissiveIntensity: 0.1 }); // Added emissive property
     const garageDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x909090, metalness: 0.6, roughness: 0.5 });
-    const EscalatorEmbarkMaterialB = new THREE.MeshStandardMaterial({ color: 0x332211,  metalness: 0.8, roughness: 0.5, emissive: 0x050200, emissiveIntensity: 0.1 }); // Dark Orange for B-Wing
+    const EscalatorEmbarkMaterialB = new THREE.MeshStandardMaterial({ color: 0xDD8822,  metalness: 0.8, roughness: 0.5, emissive: 0x442200, emissiveIntensity: 0.1 }); // Dark Orange for B-Wing
 
     // Store references globally for use in updatePlayer
     window.EscalatorMaterial = EscalatorMaterial;
@@ -716,7 +772,7 @@ function generateWorld() {
         shaftDepth: currentElevatorConfig.shaftDepth,
         minFloorIndex:  0, // -SETTINGS.numBasementFloors, //currentElevatorConfig.minFloorIndex,
         maxFloorIndex:  SETTINGS.numFloors-1, // //currentElevatorConfig.maxFloorIndex,
-        startFloorIndex: 0, // Start at ground floor
+        startFloorIndex: 2, // Start at ground floor
         platformMaterial:  blueElevatorMaterial,
         shaftMaterial: concreteMaterial,
         scene: scene,
@@ -3344,7 +3400,7 @@ function onKeyDown(event) {
         case 'KeyU': callElevator(1); break;
         case 'KeyJ': callElevator(-1); break;
         case 'KeyE': interact(); break;
-        case 'KeyF': pickUpLampshade(); break; // Add pickup action
+        //case 'KeyF': pickUpLampshade(); break; // Add pickup action
         case 'KeyP': toggleWireframeView(); break; // Toggle wireframe view
     }
 }
@@ -4185,11 +4241,14 @@ function dropLampshade(lampshade) {
             lampshade.position.y = targetFloorY;
             animationComplete = true;
             lampshade.userData.isPickable = true;
-            // console.log(`Lampshade landed on target floor ${lightFloorIndex}.`);
         }
 
         if (animationComplete) {
             clearInterval(fallInterval);
+            // Only add to fallenLampshades if it's still in the scene and meant to be pickable
+            if (lampshade.parent === scene && lampshade.userData.isPickable) {
+                fallenLampshades.push(lampshade);
+            }
             return;
         }
 
@@ -4202,7 +4261,7 @@ function dropLampshade(lampshade) {
     }, 33); // approx 30 FPS for this animation
 }
 
-function pickUpLampshade() {
+/* function pickUpLampshade() {
     if (!controls.isLocked) return;
 
     const playerPosition = controls.getObject().position;
@@ -4222,7 +4281,7 @@ function pickUpLampshade() {
             }
         }
     });
-}
+} */
 
 function applyDamageToPlayer(damage) {
     if (isGameOver) return;
@@ -4307,6 +4366,16 @@ function resetGame() {
         }
     });
     projectiles.length = 0;
+
+    
+    fallenLampshades.length = 0; // Clear fallen lampshades
+    lights.forEach(light => { // Reset collection state for all lights
+        if (light.userData) {
+            light.userData.itemCollectedFromChain = false;
+        }
+    });
+    playerInventory.lampshades = 0; // Reset inventory
+    
     
     document.getElementById('gameOver').style.display = 'none';
     updateUI();
@@ -4513,6 +4582,62 @@ function updatePlayer(deltaTime) {
         playerOnEscalator.wing = wingThisFrame;
     }
     
+        // --- Check if player walks under chain of a destroyed light ---
+  
+    // --- Player walks under chain of a destroyed light to collect item ---
+    const playerWorldPos = controls.getObject().position;
+    const playerXZ = new THREE.Vector2(playerWorldPos.x, playerWorldPos.z);
+
+    for (const lightGroup of lights) {
+        if (lightGroup.userData.isDestroyed && !lightGroup.userData.itemCollectedFromChain) {
+            const chainMesh = lightGroup.children.find(child => child.geometry === lampChainGeo);
+
+            if (chainMesh) {
+                const chainWorldPosition = new THREE.Vector3();
+                chainMesh.getWorldPosition(chainWorldPosition);
+                const chainXZ = new THREE.Vector2(chainWorldPosition.x, chainWorldPosition.z);
+                const distanceXZ = playerXZ.distanceTo(chainXZ);
+                const lightFloorY = lightGroup.userData.floorIndex * SETTINGS.floorHeight;
+                const playerFeetY = playerWorldPos.y - playerHeight;
+
+                if (distanceXZ < 0.75 && Math.abs(playerFeetY - lightFloorY) < 1.0) {
+                    console.log(`Player collected item from destroyed light's chain: ${lightGroup.name}`);
+                    lightGroup.userData.itemCollectedFromChain = true;
+
+                    playerInventory.lampshades++; // Increment inventory
+
+                    const originalLightId = lightGroup.id;
+
+                    // Remove the orange light beam
+                    /* for (let k = lightBeams.length - 1; k >= 0; k--) {
+                        if (lightBeams[k].userData.originalLightId === originalLightId) {
+                            scene.remove(lightBeams[k]);
+                            const worldObjBeamIndex = worldObjects.indexOf(lightBeams[k]);
+                            if (worldObjBeamIndex > -1) worldObjects.splice(worldObjBeamIndex, 1);
+                            lightBeams.splice(k, 1);
+                            break;
+                        }
+                    } */
+
+                    // Remove the corresponding fallen lampshade mesh
+                    for (let k = fallenLampshades.length - 1; k >= 0; k--) {
+                        const fallenShade = fallenLampshades[k];
+                        if (fallenShade.userData.originalLightId === originalLightId) {
+                            scene.remove(fallenShade);
+                            const worldObjShadeIndex = worldObjects.indexOf(fallenShade);
+                            if (worldObjShadeIndex > -1) worldObjects.splice(worldObjShadeIndex, 1);
+                            fallenLampshades.splice(k, 1);
+                            console.log(`Removed fallen lampshade for light ${originalLightId} from scene.`);
+                            break; 
+                        }
+                    }
+                    updateUI();
+                }
+            }
+        }
+    }
+    
+    
     // --- Corridor Escalator Animation Override Logic ---
     const playerIsInCorridorX = (playerPos.x >= 0 && playerPos.x <= SETTINGS.corridorWidth);
 
@@ -4642,7 +4767,9 @@ function updateUI() {
     }
     const lampshadeCountElement = document.getElementById('lampshadeCount');
     if (lampshadeCountElement) {
-        lampshadeCountElement.innerText = `Lampshades: ${playerInventory.lampshades.length}`;
+        lampshadeCountElement.innerText = `Lampshades: ${playerInventory.lampshades}`;
+    } else {
+        // console.warn("UI element 'lampshadeCount' not found."); // Optional warning
     }
 }
 
